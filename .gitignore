@@ -9,6 +9,8 @@ __pycache__/
 venv/
 .pytest_cache/
 # Runtime data
+data/*
+!data/.gitkeep
 *.sqlite
 *.sqlite3
 *.db
