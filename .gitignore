@@ -1,14 +1,33 @@
-# Secrets
+# Secrets and local overrides
 .env
 .env.*
 !.env.example
-# Python
-__pycache__/
-*.py[cod]
+config.local.yaml
+*.secret
+*.secrets
+
+# Python virtual environments and caches
 .venv/
 venv/
+env/
+__pycache__/
+*.py[cod]
 .pytest_cache/
-# Runtime data
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+*.egg-info/
+build/
+dist/
+
+# Local executable tools (FFmpeg and other downloaded binaries)
+tools/
+
+# Runtime data, databases, temporary media and backups
 data/*
 !data/.gitkeep
 *.sqlite
@@ -16,12 +35,19 @@ data/*
 *.db
 *.db-wal
 *.db-shm
+*.sqlite-wal
+*.sqlite-shm
 logs/
+log/
+*.log
 tmp/
 temp/
 downloads/
 backups/
-config.local.yaml
+
+# Editors and OS
 .idea/
 .vscode/
 .DS_Store
+Thumbs.db
+Desktop.ini
