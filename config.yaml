@@ -1,0 +1,41 @@
+telegram:
+  api_mode: local
+  api_base_urls:
+    cloud: "https://api.telegram.org"
+    local: "http://127.0.0.1:8081"
+  max_upload_size_mb:
+    cloud: 50
+    local: 2000
+  reconnect:
+    initial_delay_seconds: 1
+    max_delay_seconds: 300
+    backoff_multiplier: 2
+limits:
+  max_video_duration_seconds: 7200
+  max_audio_duration_seconds: 7200
+  daily_download_limit: 3
+  max_pending_tasks: 20
+  queue_wait_timeout_minutes: 30
+storage:
+  unknown_size_fallback_mib: 2048
+rate_limit:
+  link_attempts: 5
+  window_seconds: 600
+  ban_duration_seconds: 3600
+max_download_attempts: 3
+telegram_upload_max_attempts: 3
+telegram_upload_second_attempt_delay_seconds: 30
+telegram_upload_third_attempt_delay_seconds: 300
+timeouts:
+  analysis_timeout_seconds: 60
+  download_timeout_seconds: 600
+  ffmpeg_timeout_seconds: 1200
+backup:
+  max_copies: 3
+  interval_hours: 24
+logging:
+  level: INFO
+  max_file_size_mb: 5
+  backup_count: 3
+admin_telegram_id: 123456789
+trusted_users: []
