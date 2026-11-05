@@ -21,6 +21,7 @@ async def run(gateway: Path, url: str) -> int:
         env["HTTPS_PROXY"] = "http://127.0.0.1:" + str(port)
         env["HTTP_PROXY"] = env["HTTPS_PROXY"]
         env["NO_PROXY"] = ""
+        env["no_proxy"] = ""
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "bot.metadata_worker", url,
             env=env, stdin=asyncio.subprocess.DEVNULL,
