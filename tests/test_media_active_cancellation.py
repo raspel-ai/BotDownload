@@ -153,7 +153,7 @@ def test_live_lease_revocation_stops_media_and_removes_partial_file(tmp_path):
         controller = MediaJobController(reservations)
         started = asyncio.Event()
         async def simulated_isolated(url, *, gateway, workspace,
-                                     timeout_seconds, max_bytes, cancel):
+                                     timeout_seconds, max_bytes, cancel, variant="480p"):
             (workspace / "partial.webm").write_bytes(b"partial download")
             started.set()
             await asyncio.wait_for(cancel.wait(), timeout=5)
