@@ -37,7 +37,7 @@ def namespace_command(
 async def execute_isolated(
     url: str, *, gateway: Path, workspace: Path,
     timeout_seconds: int = 120, max_bytes: int = 256 * 1024 * 1024,
-    cancel: asyncio.Event | None = None,
+    cancel: asyncio.Event | None = None, variant: str = "480p",
 ) -> Path:
     """Fail closed unless isolation and Unix gateway are available.
 
@@ -48,6 +48,7 @@ async def execute_isolated(
     from .media_namespace_entry import entry_command
     command = entry_command(
         url, gateway, timeout_seconds=timeout_seconds, max_bytes=max_bytes,
+        variant=variant,
     )
     if not workspace.is_dir() or workspace.is_symlink():
         raise UnsafeMediaRequest("Некорректная рабочая директория")
