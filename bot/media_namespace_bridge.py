@@ -7,6 +7,7 @@ is reached through an inherited filesystem Unix socket.
 import asyncio
 import os
 import resource
+import signal
 from pathlib import Path
 import socket
 import sys
@@ -75,7 +76,8 @@ async def run_download(gateway: Path, args: list[str], *, timeout: float) -> int
             resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "yt_dlp", "--proxy", proxy, *args,
-            env=env, preexec_fn=limits, stdin=asyncio.subprocess.DEVNULL,
+            env=env, preexec_fn=limits, start_new_session=True,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=None,
         )
@@ -83,7 +85,7 @@ async def run_download(gateway: Path, args: list[str], *, timeout: float) -> int
             return await asyncio.wait_for(proc.wait(), timeout=timeout)
         except BaseException:
             if proc.returncode is None:
-                proc.kill()
+                os.killpg(proc.pid, signal.SIGKILL)
             await proc.wait()
             raise
     finally:
