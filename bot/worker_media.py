@@ -104,7 +104,7 @@ class MediaJobController:
                 file = await execute_isolated(
                     task[0], gateway=gateway_path, workspace=workspace,
                     timeout_seconds=120, max_bytes=256 * 1024 * 1024,
-                    cancel=self._cancel_event,
+                    cancel=self._cancel_event, variant=task[1],
                 )
             # Socket is not a downloadable file; unlink before returning.
             if not verify_running_lease(db_path, task_id, token):
