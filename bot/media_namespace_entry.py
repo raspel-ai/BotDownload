@@ -26,17 +26,9 @@ def entry_command(url: str, gateway: Path, *, timeout_seconds: int, max_bytes: i
     ]
 
 
-def main() -> None:
-    if len(sys.argv) not in (5, 6):
-        raise SystemExit(2)
-    gateway, timeout, max_bytes, url = sys.argv[1:5]
-    variant = sys.argv[5] if len(sys.argv) == 6 else "480p"
+def download_args(url: str, max_bytes: str, variant: str) -> list[str]:
     if variant not in ("480p", "720p", "1080p", "MP3"):
         raise SystemExit(2)
-    # Executed only inside the namespace by entry_command.
-    # No network interface is attached; bring up only loopback.
-    subprocess.run(["ip", "link", "set", "lo", "up"], check=True, timeout=5)
-    from .media_namespace_bridge import main as bridge_main
     args = [
         "--no-config", "--no-playlist", "--no-cache-dir",
         "--no-write-info-json", "--no-write-thumbnail",
@@ -56,8 +48,17 @@ def main() -> None:
             "--merge-output-format", "mp4",
             "--recode-video", "mp4",
         ]
-    # Bridge's entrypoint reads argv; no shell and no arbitrary commands.
-    sys.argv = ["media_namespace_bridge", gateway, timeout, *args]
+    return args
+
+
+def main() -> None:
+    if len(sys.argv) not in (5, 6):
+        raise SystemExit(2)
+    gateway, timeout, max_bytes, url = sys.argv[1:5]
+    variant = sys.argv[5] if len(sys.argv) == 6 else "480p"
+    subprocess.run(["ip", "link", "set", "lo", "up"], check=True, timeout=5)
+    from .media_namespace_bridge import main as bridge_main
+    sys.argv = ["media_namespace_bridge", gateway, timeout, *download_args(url, max_bytes, variant)]
     bridge_main()
 
 
