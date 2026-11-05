@@ -1,30 +1,28 @@
-"""Security regression tests for media namespace bridge and launcher.
+"""Security regression tests for portable media bridge and launcher.
 
 No external network access or yt-dlp execution.
 """
 import asyncio
 import socket
-from unittest.mock import patch
 
 import pytest
 
 from bot.media_namespace_bridge import serve_bridge
-from bot.media_namespace_entry import entry_command
-from bot.media_executor import UnsafeMediaRequest
+from bot.media_isolated_runner import portable_command
 
 
-def test_namespace_command_is_explicit_and_no_shell(tmp_path):
+def test_portable_command_is_explicit_and_no_shell(tmp_path):
     gateway = tmp_path / "egress.sock"
     with socket.socket(socket.AF_UNIX) as sock:
         sock.bind(str(gateway))
-        with patch("bot.media_namespace_entry.shutil.which", return_value="/usr/bin/unshare"):
-            cmd = entry_command(
-                "https://www.youtube.com/watch?v=abcdefghijk",
-                gateway, timeout_seconds=30, max_bytes=1024,
-            )
-    assert cmd[:5] == ["/usr/bin/unshare", "--user", "--map-root-user", "--net", "--fork"]
-    assert "shell" not in cmd
-    assert "bot.media_namespace_entry" in cmd
+        cmd = portable_command(
+            "https://www.youtube.com/watch?v=abcdefghijk",
+            gateway, 30, 1024, "480p",
+        )
+    assert cmd[1:3] == ["-m", "bot.media_namespace_bridge"]
+    assert "unshare" not in cmd
+    assert "--format" in cmd
+    assert "--" in cmd
 
 
 def test_bridge_forwards_bytes_to_unix_gateway(tmp_path):
