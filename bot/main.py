@@ -1,6 +1,7 @@
 """Stage 2 entrypoint: initialize storage and start Telegram polling."""
 import asyncio
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import shutil
@@ -19,6 +20,7 @@ from .upload_queue import run_upload_queue
 from .worker_supervisor import OfflineWorkerSupervisor
 from .queue_maintenance import run_queue_maintenance
 from .worker_crash_recovery import reconcile_confirmed_worker_exit
+from .media_queue_dispatcher import run_media_dispatcher
 
 
 async def run_bot(settings) -> None:
@@ -30,13 +32,22 @@ async def run_bot(settings) -> None:
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
     stop = asyncio.Event()
-    worker = OfflineWorkerSupervisor(Path("data/bot.sqlite"))
+    media_enabled = os.environ.get("BOTDOWNLOAD_EXPERIMENTAL_MEDIA", "") == "1"
+    worker = OfflineWorkerSupervisor(
+        Path("data/bot.sqlite"),
+        media_root=settings.data["storage"]["download_dir"] if media_enabled else None,
+    )
     try:
         await worker.start()
     except BaseException:
         await bot.session.close()
         raise
-    logging.info("Offline worker запущен автоматически (загрузки отключены)")
+    logging.info("Worker запущен; экспериментальная загрузка: %s", media_enabled)
+    media_dispatch = asyncio.create_task(run_media_dispatcher(
+        stop=stop, db_path=Path("data/bot.sqlite"), socket_path=worker.socket_path,
+        max_wait_minutes=settings.data["limits"]["queue_wait_timeout_minutes"],
+        configured_download_dir=settings.data["storage"]["download_dir"],
+    )) if media_enabled else None
     upload = asyncio.create_task(run_upload_queue(
         stop=stop, bot=bot, db_path=Path("data/bot.sqlite"),
         configured_download_dir=settings.data["storage"]["download_dir"],
@@ -52,14 +63,16 @@ async def run_bot(settings) -> None:
     ))
     polling = asyncio.create_task(dispatcher.start_polling(bot))
     worker_exit = asyncio.create_task(worker.wait())
+    services = (polling, worker_exit, upload, maintenance) + ((media_dispatch,) if media_dispatch is not None else ())
     try:
         done, _ = await asyncio.wait(
-            (polling, worker_exit, upload, maintenance),
+            services,
             return_when=asyncio.FIRST_COMPLETED,
         )
         for service, label in ((upload, 'Telegram upload queue'),
-                               (maintenance, 'Queue maintenance')):
-            if service in done:
+                               (maintenance, 'Queue maintenance'),
+                               (media_dispatch, 'Media dispatcher')):
+            if service is not None and service in done:
                 if service.cancelled():
                     raise RuntimeError(f'{label} неожиданно отменён')
                 failure = service.exception()
@@ -85,6 +98,13 @@ async def run_bot(settings) -> None:
             except asyncio.CancelledError:
                 pass
         stop.set()
+        if media_dispatch is not None:
+            if not media_dispatch.done():
+                media_dispatch.cancel()
+            try:
+                await media_dispatch
+            except asyncio.CancelledError:
+                pass
         if not maintenance.done():
             await maintenance
         else:
