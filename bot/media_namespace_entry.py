@@ -1,29 +1,5 @@
-"""Namespace entrypoint: configure loopback without host network access."""
-import os
-from pathlib import Path
-import shutil
-import subprocess
-import sys
+"""Build yt-dlp arguments for the portable media launcher."""
 
-from .media_executor import UnsafeMediaRequest, validate_media_url
-
-
-def entry_command(url: str, gateway: Path, *, timeout_seconds: int, max_bytes: int, variant: str = '480p') -> list[str]:
-    validate_media_url(url)
-    if variant not in ("480p", "720p", "1080p", "MP3"):
-        raise UnsafeMediaRequest("Неизвестный формат")
-    if (not gateway.is_absolute() or not gateway.is_socket()
-            or type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 3600
-            or type(max_bytes) is not int or not 1 <= max_bytes <= 2**31):
-        raise UnsafeMediaRequest("Небезопасная конфигурация namespace")
-    unshare = shutil.which("unshare")
-    if not unshare or not shutil.which("ip"):
-        raise UnsafeMediaRequest("Не установлены unshare/ip")
-    return [
-        unshare, "--user", "--map-root-user", "--net", "--fork",
-        sys.executable, "-m", "bot.media_namespace_entry",
-        str(gateway), str(timeout_seconds), str(max_bytes), url, variant,
-    ]
 
 
 def download_args(url: str, max_bytes: str, variant: str) -> list[str]:
@@ -50,17 +26,3 @@ def download_args(url: str, max_bytes: str, variant: str) -> list[str]:
         ]
     return args
 
-
-def main() -> None:
-    if len(sys.argv) not in (5, 6):
-        raise SystemExit(2)
-    gateway, timeout, max_bytes, url = sys.argv[1:5]
-    variant = sys.argv[5] if len(sys.argv) == 6 else "480p"
-    args = download_args(url, max_bytes, variant)
-    from .media_namespace_bridge import main as bridge_main
-    sys.argv = ["media_namespace_bridge", gateway, timeout, *args]
-    bridge_main()
-
-
-if __name__ == "__main__":
-    main()
