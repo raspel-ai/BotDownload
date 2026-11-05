@@ -17,7 +17,7 @@ _TERMINAL = ("completed", "cancelled", "failed")
 
 def cleanup_terminal_files(db_path: Path, configured_download_dir: str, *,
                            project_root: Path = Path(".")) -> tuple[int, int]:
-    """Return (cleaned, skipped). Run with workers stopped, not concurrently."""
+    """Return (cleaned, skipped). Only terminal tasks are eligible."""
     root = download_root(configured_download_dir, project_root)
     cleaned = skipped = 0
     with database(db_path) as db:
