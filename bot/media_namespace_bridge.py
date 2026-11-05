@@ -64,6 +64,8 @@ async def run_download(gateway: Path, args: list[str], *, timeout: float) -> int
                      "https_proxy", "all_proxy", "NO_PROXY", "no_proxy"):
             env.pop(name, None)
         # yt-dlp's explicit --proxy applies to extractor and media requests.
+        env["NO_PROXY"] = ""
+        env["no_proxy"] = ""
         proxy = f"http://127.0.0.1:{port}"
         def limits():
             os.umask(0o077)
@@ -94,8 +96,8 @@ def main() -> None:
         raise SystemExit(2)
     gateway = Path(sys.argv[1])
     timeout = float(sys.argv[2])
-    # Network namespace must be provisioned by parent, never trust host routes.
-    if not Path("/proc/self/ns/net").exists():
+    # Portable v1: no user/network namespace requirement.
+    if not gateway.is_absolute() or not gateway.is_socket():
         raise SystemExit(2)
     asyncio.run(_main(gateway, sys.argv[3:], timeout))
 
