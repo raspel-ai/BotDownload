@@ -198,9 +198,12 @@ async def preview_format(callback: CallbackQuery) -> None:
     elif task_id is None:
         await callback.answer("Эта кнопка недоступна или карточка отменена", show_alert=True)
     else:
+        import os
+        media_enabled = os.environ.get("BOTDOWNLOAD_EXPERIMENTAL_MEDIA", "") == "1"
         note = "Выбор сохранён" if created else "Выбор уже сохранён"
         await callback.answer(note)
-        status = f"⏳ Выбрано: {variant}\nЗадача №{task_id} зарегистрирована.\nСкачивание пока отключено."
+        suffix = "Загрузка поставлена в очередь." if media_enabled else "Скачивание пока отключено."
+        status = f"⏳ Выбрано: {variant}\nЗадача №{task_id} зарегистрирована.\n{suffix}"
         if callback.message.photo:
             await callback.message.edit_caption(caption=status)
         else:
