@@ -14,7 +14,7 @@ class EgressDenied(ValueError):
     pass
 
 
-_SUFFIXES = ("youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtube-nocookie.com")
+_SUFFIXES = ("youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtube-nocookie.com", "instagram.com", "cdninstagram.com", "fbcdn.net", "tiktok.com", "tiktokcdn.com", "byteoversea.com")
 _MAX_HEADER = 4096
 
 
