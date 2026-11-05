@@ -1,5 +1,5 @@
 telegram:
-  api_mode: cloud
+  api_mode: local
   api_base_urls:
     cloud: "https://api.telegram.org"
     local: "http://127.0.0.1:8081"
