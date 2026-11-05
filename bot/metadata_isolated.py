@@ -16,9 +16,6 @@ async def inspect_isolated(url: str, *, timeout_seconds: int = 60) -> dict:
         raise MetadataProcessError("Недопустимая ссылка")
     if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 120:
         raise MetadataProcessError("Недопустимый тайм-аут")
-    unshare = shutil.which("unshare")
-    if not unshare or not shutil.which("ip"):
-        raise MetadataProcessError("Для анализа требуются unshare и ip")
     with tempfile.TemporaryDirectory(prefix="botdownload-metadata-") as temp:
         socket_path = Path(temp) / "gateway.sock"
         server = await asyncio.start_unix_server(handle_connect, path=str(socket_path))
@@ -26,8 +23,7 @@ async def inspect_isolated(url: str, *, timeout_seconds: int = 60) -> dict:
         try:
             async with server:
                 return await run_json_subprocess(
-                    [unshare, "--user", "--map-root-user", "--net", "--fork",
-                     sys.executable, "-m", "bot.metadata_namespace_entry",
+                    [sys.executable, "-m", "bot.metadata_proxy_entry",
                      str(socket_path), url],
                     cwd=Path(__file__).resolve().parent.parent,
                     timeout_seconds=timeout_seconds,
