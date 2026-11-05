@@ -45,7 +45,7 @@ def test_active_cancel_kills_isolated_process_group(tmp_path):
             )
             child_file = tmp_path / "child.pid"
             event = asyncio.Event()
-            with patch("bot.media_namespace_entry.entry_command",
+            with patch("bot.media_isolated_runner.portable_command",
                        return_value=[sys.executable, "-c", code, str(child_file)]):
                 task = asyncio.create_task(execute_isolated(
                     "https://www.youtube.com/watch?v=abcdefghijk",
