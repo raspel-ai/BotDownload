@@ -16,16 +16,16 @@ def test_inspect_uses_isolated_runner_by_default():
         runner.assert_awaited_once_with(URL, timeout_seconds=30)
 
 
-def test_namespace_launcher_is_required():
+def test_portable_launcher_does_not_require_unshare():
     from bot.metadata_isolated import inspect_isolated
-    from bot.metadata_process import MetadataProcessError
-    with patch("bot.metadata_isolated.shutil.which", return_value=None):
-        try:
-            asyncio.run(inspect_isolated(URL))
-        except MetadataProcessError:
-            pass
-        else:
-            raise AssertionError("metadata ran without network isolation")
+    with patch("bot.metadata_isolated.shutil.which", return_value=None), patch(
+        "bot.metadata_isolated.run_json_subprocess", new_callable=AsyncMock
+    ) as subprocess_call:
+        subprocess_call.return_value = {"title": "ok"}
+        assert asyncio.run(inspect_isolated(URL)) == {"title": "ok"}
+        argv = subprocess_call.await_args.args[0]
+        assert "bot.metadata_proxy_entry" in argv
+        assert "unshare" not in argv
 
 
 def test_metadata_gateway_supports_provider_hosts():
