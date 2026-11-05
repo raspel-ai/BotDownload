@@ -8,7 +8,7 @@ import sys
 from .media_executor import UnsafeMediaRequest, validate_media_url
 
 
-def entry_command(url: str, gateway: Path, *, timeout_seconds: int, max_bytes: int) -> list[str]:
+def entry_command(url: str, gateway: Path, *, timeout_seconds: int, max_bytes: int, variant: str = '480p') -> list[str]:
     validate_media_url(url)
     if (not gateway.is_absolute() or not gateway.is_socket()
             or type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 3600
