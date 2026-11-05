@@ -33,10 +33,11 @@ async def run_bot(settings) -> None:
     dispatcher.include_router(router)
     stop = asyncio.Event()
     media_enabled = os.environ.get("BOTDOWNLOAD_EXPERIMENTAL_MEDIA", "") == "1"
-    worker = OfflineWorkerSupervisor(
-        Path("data/bot.sqlite"),
-        media_root=settings.data["storage"]["download_dir"] if media_enabled else None,
+    worker_options = (
+        {"media_root": settings.data["storage"]["download_dir"]}
+        if media_enabled else {}
     )
+    worker = OfflineWorkerSupervisor(Path("data/bot.sqlite"), **worker_options)
     try:
         await worker.start()
     except BaseException:
