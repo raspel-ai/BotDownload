@@ -6,6 +6,7 @@ from bot import main as entrypoint
 
 def test_run_bot_starts_and_stops_upload_queue(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BOTDOWNLOAD_EXPERIMENTAL_MEDIA", raising=False)
     events = []
 
     class Session:
