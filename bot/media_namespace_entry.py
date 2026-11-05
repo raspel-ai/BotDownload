@@ -56,9 +56,9 @@ def main() -> None:
         raise SystemExit(2)
     gateway, timeout, max_bytes, url = sys.argv[1:5]
     variant = sys.argv[5] if len(sys.argv) == 6 else "480p"
-    subprocess.run(["ip", "link", "set", "lo", "up"], check=True, timeout=5)
+    args = download_args(url, max_bytes, variant)
     from .media_namespace_bridge import main as bridge_main
-    sys.argv = ["media_namespace_bridge", gateway, timeout, *download_args(url, max_bytes, variant)]
+    sys.argv = ["media_namespace_bridge", gateway, timeout, *args]
     bridge_main()
 
 
