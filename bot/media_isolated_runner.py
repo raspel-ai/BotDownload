@@ -39,17 +39,17 @@ async def execute_isolated(
     timeout_seconds: int = 120, max_bytes: int = 256 * 1024 * 1024,
     cancel: asyncio.Event | None = None, variant: str = "480p",
 ) -> Path:
-    """Fail closed unless isolation and Unix gateway are available.
-
-    This is an opt-in primitive, not connected to production IPC or polling.
-    """
+    """Run through a bounded local CONNECT gateway without user namespaces."""
     # An 'ip link' command cannot exec the bridge: use a dedicated launcher
     # with an explicit namespace-local setup and no shell.
-    from .media_namespace_entry import entry_command
-    command = entry_command(
-        url, gateway, timeout_seconds=timeout_seconds, max_bytes=max_bytes,
-        variant=variant,
-    )
+    from .media_namespace_entry import download_args
+    from .media_executor import validate_media_url
+    validate_media_url(url)
+    if not gateway.is_absolute() or not gateway.is_socket():
+        raise UnsafeMediaRequest("Шлюз недоступен")
+    command = [sys.executable, "-m", "bot.media_namespace_bridge",
+               str(gateway), str(timeout_seconds),
+               *download_args(url, str(max_bytes), variant)]
     if not workspace.is_dir() or workspace.is_symlink():
         raise UnsafeMediaRequest("Некорректная рабочая директория")
     if cancel is not None and cancel.is_set():
