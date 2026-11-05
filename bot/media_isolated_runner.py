@@ -1,37 +1,12 @@
-"""Launch yt-dlp in a fresh unprivileged user+network namespace.
-
-No host-network fallback. The gateway is reachable only via Unix socket;
-the namespace contains loopback and no external network interface.
-"""
+"""Run media downloads via the portable local CONNECT gateway."""
 import asyncio
 import os
 import logging
 from pathlib import Path
-import shutil
 import signal
 import sys
 
 from .media_executor import UnsafeMediaRequest, validate_media_url
-
-
-def namespace_command(
-    url: str, gateway: Path, *, timeout_seconds: int = 120,
-    max_bytes: int = 256 * 1024 * 1024,
-) -> list[str]:
-    validate_media_url(url)
-    if (not isinstance(gateway, Path) or not gateway.is_absolute()
-            or not gateway.is_socket()
-            or type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 3600
-            or type(max_bytes) is not int or not 1 <= max_bytes <= 2**31):
-        raise UnsafeMediaRequest("Недопустимая конфигурация изоляции")
-    unshare = shutil.which("unshare")
-    ip = shutil.which("ip")
-    if not unshare or not ip:
-        raise UnsafeMediaRequest("Network namespace недоступен")
-    return [
-        unshare, "--user", "--map-root-user", "--net", "--fork",
-        "--", ip, "link", "set", "lo", "up",
-    ]
 
 
 def portable_command(url: str, gateway: Path, timeout_seconds: int, max_bytes: int, variant: str) -> list[str]:
@@ -48,8 +23,6 @@ async def execute_isolated(
     cancel: asyncio.Event | None = None, variant: str = "480p",
 ) -> Path:
     """Run through a bounded local CONNECT gateway without user namespaces."""
-    # An 'ip link' command cannot exec the bridge: use a dedicated launcher
-    # with an explicit namespace-local setup and no shell.
     validate_media_url(url)
     if not gateway.is_absolute() or not gateway.is_socket():
         raise UnsafeMediaRequest("Шлюз недоступен")
@@ -61,7 +34,7 @@ async def execute_isolated(
     env = dict(os.environ)
     project = str(Path(__file__).resolve().parent.parent)
     env["PYTHONPATH"] = project
-    diagnostic = workspace / ".namespace-stderr.log"
+    diagnostic = workspace / ".download-stderr.log"
     with diagnostic.open("wb") as log_file:
         os.chmod(diagnostic, 0o600)
         proc = await asyncio.create_subprocess_exec(
@@ -81,12 +54,12 @@ async def execute_isolated(
         if not done:
             raise TimeoutError("Время загрузки истекло")
         if waiter.result() == 124:
-            raise TimeoutError("Время загрузки истекло (namespace yt-dlp)")
+            raise TimeoutError("Время загрузки истекло (yt-dlp)")
         if waiter.result() != 0:
             details = diagnostic.read_text(encoding="utf-8", errors="replace")[-3000:]
             import re
             details = re.sub(r"https?://\\S+", "[URL]", details)
-            logging.error("Namespace/yt-dlp diagnostic (task-local): %s", details)
+            logging.error("yt-dlp diagnostic (task-local): %s", details)
             raise RuntimeError(f"Изолированная загрузка завершилась с кодом {waiter.result()}")
         diagnostic.unlink(missing_ok=True)
         files = list(workspace.iterdir())
@@ -100,7 +73,7 @@ async def execute_isolated(
         return files[0]
     finally:
         # Kill the dedicated process group even when the launcher has already
-        # exited: namespace grandchildren may otherwise outlive their parent.
+        # exited: downloader grandchildren may otherwise outlive their parent.
         # The group was created exclusively for this invocation.
         try:
             os.killpg(proc.pid, signal.SIGKILL)
