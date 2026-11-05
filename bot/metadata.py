@@ -50,7 +50,12 @@ async def inspect(url: str, timeout: int = 60, *, network_guard=None) -> dict:
     if not validate_media_url(url):
         raise AnalysisError("Недопустимая ссылка")
     if network_guard is None:
-        raise AnalysisError("Сетевой анализ недоступен: не настроена изоляция")
+        from .metadata_isolated import inspect_isolated
+        from .metadata_process import MetadataProcessError
+        try:
+            return await inspect_isolated(url, timeout_seconds=timeout)
+        except (MetadataProcessError, OSError, asyncio.TimeoutError) as exc:
+            raise AnalysisError("Не удалось проанализировать ссылку в изоляции") from exc
     from .metadata_process import MetadataProcessError, inspect_in_subprocess
     try:
         return await inspect_in_subprocess(url, timeout_seconds=timeout, network_guard=network_guard)
