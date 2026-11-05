@@ -1,15 +1,15 @@
-"""Namespace-confined metadata inspection via the existing Unix CONNECT gateway."""
+"""Portable metadata inspection through the existing Unix CONNECT gateway."""
 import asyncio
 import os
 from pathlib import Path
-import subprocess
+import signal
 import sys
 
 from .media_namespace_bridge import serve_bridge
 from .telegram_handlers import validate_media_url
 
 
-async def run(gateway: Path, url: str) -> int:
+async def run(gateway: Path, url: str, *, timeout: float = 55) -> int:
     if not validate_media_url(url):
         return 2
     server, port = await serve_bridge(gateway)
@@ -25,12 +25,16 @@ async def run(gateway: Path, url: str) -> int:
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "bot.metadata_worker", url,
             env=env, stdin=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
         )
         try:
-            return await asyncio.wait_for(proc.wait(), timeout=55)
+            return await asyncio.wait_for(proc.wait(), timeout=timeout)
         except BaseException:
             if proc.returncode is None:
-                proc.kill()
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             await proc.wait()
             raise
     finally:
@@ -44,7 +48,6 @@ def main() -> None:
     gateway, url = Path(sys.argv[1]), sys.argv[2]
     if not gateway.is_absolute() or not gateway.is_socket():
         raise SystemExit(2)
-    subprocess.run(["ip", "link", "set", "lo", "up"], check=True, timeout=5)
     raise SystemExit(asyncio.run(run(gateway, url)))
 
 
