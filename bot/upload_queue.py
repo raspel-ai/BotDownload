@@ -72,6 +72,11 @@ async def run_upload_queue(
                 logging.exception("Необработанная ошибка очереди отправки задачи %d", task_id)
                 delivered = False
             if delivered:
+                from .ready_cleanup import cleanup_terminal_files
+                try:
+                    cleanup_terminal_files(db_path, configured_download_dir, project_root=project_root)
+                except (OSError, ValueError):
+                    logging.exception("Не удалось очистить отправленный файл задачи %d", task_id)
                 continue
             # Quota exhaustion and failed preflight leave a pending task.
             # Back off instead of spinning on the same task indefinitely.
