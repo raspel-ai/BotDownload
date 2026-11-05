@@ -88,6 +88,9 @@ async def execute_isolated(
         files = list(workspace.iterdir())
         if len(files) != 1 or not files[0].is_file() or files[0].is_symlink():
             raise RuntimeError("Небезопасный результат загрузки")
+        expected_suffix = ".mp3" if variant == "MP3" else ".mp4"
+        if files[0].suffix.lower() != expected_suffix:
+            raise RuntimeError("Формат готового файла не соответствует выбору")
         if not 0 < files[0].stat().st_size <= max_bytes:
             raise RuntimeError("Размер файла вне допустимого диапазона")
         return files[0]
