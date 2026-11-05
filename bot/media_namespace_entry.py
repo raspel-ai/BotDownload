@@ -27,9 +27,12 @@ def entry_command(url: str, gateway: Path, *, timeout_seconds: int, max_bytes: i
 
 
 def main() -> None:
-    if len(sys.argv) != 5:
+    if len(sys.argv) not in (5, 6):
         raise SystemExit(2)
-    gateway, timeout, max_bytes, url = sys.argv[1:]
+    gateway, timeout, max_bytes, url = sys.argv[1:5]
+    variant = sys.argv[5] if len(sys.argv) == 6 else "480p"
+    if variant not in ("480p", "720p", "1080p", "MP3"):
+        raise SystemExit(2)
     # Executed only inside the namespace by entry_command.
     # No network interface is attached; bring up only loopback.
     subprocess.run(["ip", "link", "set", "lo", "up"], check=True, timeout=5)
