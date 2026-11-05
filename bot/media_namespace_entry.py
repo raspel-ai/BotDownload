@@ -47,6 +47,15 @@ def main() -> None:
         "--output", "%(id).80s.%(ext)s",
         "--", url,
     ]
+    if variant == "MP3":
+        args[0:0] = ["--extract-audio", "--audio-format", "mp3", "--audio-quality", "5"]
+    else:
+        height = variant[:-1]
+        args[0:0] = [
+            "--format", "bv*[height<=" + height + "]+ba/b[height<=" + height + "]",
+            "--merge-output-format", "mp4",
+            "--recode-video", "mp4",
+        ]
     # Bridge's entrypoint reads argv; no shell and no arbitrary commands.
     sys.argv = ["media_namespace_bridge", gateway, timeout, *args]
     bridge_main()
