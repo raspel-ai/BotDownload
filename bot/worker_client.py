@@ -1,47 +1,47 @@
-"""Read-only worker task-status client. No command execution or file paths sent."""
+"""Bot-side IPC client for the protected worker."""
 import asyncio
 import json
+import os
 from pathlib import Path
+from uuid import uuid4
 
-from .worker_ipc import MAX_MESSAGE, WorkerProtocolError
+MAX_MESSAGE = 65536
 
 
-async def query_task_status(socket_path: Path, task_id: int, *, timeout: float = 3.0) -> str:
-    if type(task_id) is not int or not 0 < task_id <= 9223372036854775807:
-        raise WorkerProtocolError("Недопустимый ID задачи")
-    if not isinstance(socket_path, Path) or not socket_path.is_absolute():
-        raise WorkerProtocolError("Недопустимый путь сокета")
-    import math
-    if (type(timeout) not in (int, float) or not math.isfinite(timeout)
-            or timeout <= 0):
-        raise WorkerProtocolError("Недопустимый тайм-аут")
+class IPCError(RuntimeError):
+    pass
+
+
+async def request(action: str, task_id: int, payload=None, *, socket_path=None, timeout=75):
+    if action not in ("inspect", "download", "cancel", "status"):
+        raise IPCError("Invalid action")
+    if type(task_id) is not int or not 0 < task_id < 2**63:
+        raise IPCError("Invalid task ID")
+    path = socket_path or Path(os.environ.get("BOTDOWNLOAD_WORKER_SOCKET", "/run/botdownload/worker.sock"))
+    message = {"version": 1, "request_id": str(uuid4()), "task_id": task_id, "action": action, "payload": payload if payload is not None else {}}
+    raw = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
+    if len(raw) > MAX_MESSAGE:
+        raise IPCError("Request too large")
     try:
-        async with asyncio.timeout(timeout):
-            reader, writer = await asyncio.open_unix_connection(str(socket_path))
-            try:
-                payload = json.dumps(
-                    {"op": "task_status", "version": 1, "task_id": task_id},
-                    separators=(",", ":"),
-                ).encode() + b"\n"
-                writer.write(payload)
-                await writer.drain()
-                raw = await reader.readline()
-                if not raw.endswith(b"\n") or len(raw) > MAX_MESSAGE:
-                    raise WorkerProtocolError("Некорректный ответ worker")
-                result = json.loads(raw)
-                allowed = {"queued", "downloading", "processing", "upload_pending",
-                           "uploading", "completed", "failed", "cancelled",
-                           "missing", "unavailable"}
-                if (type(result) is not dict or set(result) != {
-                    "version", "status", "task_status", "downloads_enabled",
-                } or type(result["version"]) is not int or result["version"] != 1
-                        or result["status"] != "ok"
-                        or result["downloads_enabled"] is not False
-                        or result["task_status"] not in allowed):
-                    raise WorkerProtocolError("Недостоверный ответ worker")
-                return result["task_status"]
-            finally:
-                writer.close()
-                await writer.wait_closed()
-    except (OSError, asyncio.TimeoutError, UnicodeError, ValueError) as exc:
-        raise WorkerProtocolError("Worker недоступен или ответ некорректен") from exc
+        reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(str(path)), 3)
+        try:
+            writer.write(raw)
+            await asyncio.wait_for(writer.drain(), 3)
+            reply = await asyncio.wait_for(reader.readline(), timeout)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    except (OSError, asyncio.TimeoutError, ConnectionError) as exc:
+        raise IPCError("Protected worker unavailable") from exc
+    if not reply.endswith(b"\n") or len(reply) > MAX_MESSAGE:
+        raise IPCError("Invalid response size")
+    try:
+        result = json.loads(reply)
+    except (ValueError, UnicodeError) as exc:
+        raise IPCError("Invalid response JSON") from exc
+    if (not isinstance(result, dict) or result.get("version") != 1
+            or result.get("request_id") != message["request_id"]
+            or result.get("task_id") != task_id
+            or result.get("status") not in ("accepted", "running", "completed", "failed", "cancelled", "not_found")):
+        raise IPCError("Invalid response fields")
+    return result
