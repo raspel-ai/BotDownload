@@ -11,6 +11,7 @@ WorkingDirectory=/opt/botdownload
 Environment=BOTDOWNLOAD_WORKER_SOCKET=/run/botdownload/worker.sock
 RuntimeDirectory=botdownload
 RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
 ExecStart=/opt/botdownload/.venv/bin/python -m bot.worker_service
 Restart=on-failure
 RestartSec=3
