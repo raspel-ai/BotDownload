@@ -20,7 +20,7 @@ def main() -> None:
     except KeyError:
         raise SystemExit("Пользователь клиента не найден") from None
     socket_path = Path(os.environ.get(
-        "BOTDOWNLOAD_WORKER_SOCKET", "/tmp/botdownload-worker/worker.sock",
+        "BOTDOWNLOAD_WORKER_SOCKET", "/run/botdownload/worker.sock",
     ))
     # Manual V1: create a private runtime directory without systemd.
     # Never follow an existing symlink or accept a shared writable directory.
@@ -33,10 +33,8 @@ def main() -> None:
     info = parent.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
         raise SystemExit("Каталог сокета должен принадлежать текущему пользователю и иметь права 0700")
-    db_value = os.environ.get("BOTDOWNLOAD_WORKER_DB", "")
-    db_path = Path(db_value) if db_value else None
     try:
-        asyncio.run(serve(socket_path, allowed_uid=allowed_uid, db_path=db_path))
+        asyncio.run(serve(socket_path, allowed_uid=allowed_uid))
     except (OSError, ValueError) as exc:
         print(f"Worker не запущен: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
