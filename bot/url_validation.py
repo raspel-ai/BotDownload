@@ -42,6 +42,8 @@ def validate_url(raw_url: str) -> ValidatedURL:
     except ValueError as exc:
         raise URLValidationError("Некорректный адрес") from exc
     path, query = parsed.path, parsed.query
+    if not path or "//" in path or "?" in path:
+        raise URLValidationError("Неоднозначный путь")
     if hostname in _YOUTUBE:
         if path != "/watch" or not query:
             raise URLValidationError("Неподдерживаемый путь YouTube")
