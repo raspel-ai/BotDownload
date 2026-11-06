@@ -37,3 +37,10 @@ Do not mark service ready or ask for VPS acceptance until integrated scenario is
 - `2fdc07b1`: bot main no longer starts OfflineWorkerSupervisor.
 - **NOT TESTED**: integration, systemd, yt-dlp, Telegram, VPS. Worker metadata module still contains legacy imports; older worker modules remain and must be retired. New IPC status client callers may need migration. Worker inspect currently uses asyncio.to_thread and cannot forcibly terminate a stuck extractor; must replace with cancellable process isolation before deployment.
 - Next: audit runtime imports and test failures, replace thread inspect with supervised subprocess/process group; implement download and FFmpeg with safe cancellation, then queues/delivery/recovery; repair unit lifecycle and deployment paths.
+
+## 2026-11-06 latest continuation
+- Protected inspect subprocess fixes committed: 9e07634f, a2c037bf, 91c3f839.
+- Shared socket runtime ownership fixed: bot unit no longer declares RuntimeDirectory; worker unit owns it and preserves on restart (d648c664, 1b951ff9).
+- IPC request ID matching corrected (68f78cf4); protocol rejection tests added (466649a6).
+- Tests NOT RUN: container cannot resolve github.com for git clone. New test suite and real worker process still need execution.
+- Remaining: secure download and ffmpeg, confirmed cancellation, DB queue/worker orchestration, recovery, delivery, installation, VPS systemd isolation verification. No release claim.
