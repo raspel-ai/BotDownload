@@ -47,7 +47,10 @@ def validate_url(raw_url: str) -> ValidatedURL:
     if hostname in _YOUTUBE:
         if path != "/watch" or not query:
             raise URLValidationError("Неподдерживаемый путь YouTube")
-        pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True)
+        try:
+            pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True)
+        except ValueError as exc:
+            raise URLValidationError("Некорректные параметры YouTube") from exc
         if len(pairs) != 1 or pairs[0][0] != "v" or not _YT_ID.fullmatch(pairs[0][1]):
             raise URLValidationError("Недопустимые параметры YouTube")
         return ValidatedURL("youtube", raw_url, "video", pairs[0][1])
