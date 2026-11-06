@@ -87,6 +87,31 @@ class WorkerState:
                 timeout_seconds=60, max_output_bytes=60000,
             )
 
+    async def download(self, task_id, url, variant):
+        import sys
+        from .download_storage import (download_root, create_task_directory,
+                                       cleanup_task_directory, require_free_space)
+        from .metadata_process import run_json_subprocess
+        async with self.download_slot:
+            root = download_root(os.environ.get("BOTDOWNLOAD_MEDIA_ROOT", "/opt/botdownload/files"))
+            require_free_space(root, 256 * 1024 * 1024)
+            workspace = create_task_directory(root, str(task_id))
+            completed = False
+            try:
+                result = await run_json_subprocess(
+                    [sys.executable, "-m", "bot.media_worker", url, variant, str(workspace)],
+                    cwd=Path(__file__).resolve().parent.parent,
+                    timeout_seconds=1200, max_output_bytes=8192,
+                )
+                file = Path(result["file"])
+                if file.parent != workspace or file.is_symlink() or not file.is_file():
+                    raise WorkerProtocolError("Invalid output file")
+                completed = True
+                return result
+            finally:
+                if not completed:
+                    cleanup_task_directory(root, workspace)
+
     async def dispatch(self, message):
         action, task_id, payload = message["action"], message["task_id"], message["payload"]
         if action == "status":
@@ -111,15 +136,16 @@ class WorkerState:
             if job["status"] not in ("completed", "failed"):
                 job["status"] = "cancelled"
             return {"status": job["status"]}
-        if action == "download":
-            return {"status": "failed", "error": "Protected download pipeline not yet implemented"}
+
         async with self.jobs_lock:
             existing = self.jobs.get(task_id)
             if existing:
                 return {"status": existing["status"], **({"result": existing["result"]} if "result" in existing else {})}
             job = {"status": "running"}
             self.jobs[task_id] = job
-            running = asyncio.create_task(self.inspect(task_id, payload["url"]))
+            running = asyncio.create_task(
+                self.download(task_id, payload["url"], payload["variant"])
+                if action == "download" else self.inspect(task_id, payload["url"]))
             job["task"] = running
         try:
             result = await asyncio.shield(running)
@@ -142,7 +168,7 @@ class WorkerState:
         except Exception:
             if job["status"] == "running":
                 job["status"] = "failed"
-            return {"status": job["status"], "error": "Inspection failed"}
+            return {"status": job["status"], "error": "Worker operation failed"}
 
 
 async def handle_connection(reader, writer, *, allowed_uid, state):
