@@ -47,16 +47,16 @@ def _extract(url: str) -> dict:
 
 
 async def inspect(url: str, timeout: int = 60, *, network_guard=None) -> dict:
-    if not validate_media_url(url):
-        raise AnalysisError("Недопустимая ссылка")
-    if network_guard is None:
-        raise AnalysisError("Сетевой анализ недоступен: не настроена изоляция")
-    from .metadata_process import MetadataProcessError, inspect_in_subprocess
+    """Inspect only via the persistent protected worker; never locally."""
+    from .worker_client import request, IPCError
+    from .url_validation import validate_url, URLValidationError
     try:
-        return await inspect_in_subprocess(url, timeout_seconds=timeout, network_guard=network_guard)
-    except UnsafeNetworkTarget as exc:
-        raise AnalysisError("Небезопасный сетевой адрес") from exc
-    except asyncio.TimeoutError as exc:
-        raise AnalysisError("Превышено время анализа") from exc
-    except (MetadataProcessError, UnsafeNetworkTarget) as exc:
-        raise AnalysisError("Не удалось безопасно проанализировать ссылку") from exc
+        validate_url(url)
+        import secrets
+        task_id = secrets.randbelow(2**63 - 1) + 1
+        response = await request("inspect", task_id, {"url": url}, timeout=timeout + 10)
+    except (URLValidationError, IPCError) as exc:
+        raise AnalysisError("Защищённый анализ недоступен") from exc
+    if response["status"] != "completed" or not isinstance(response.get("result"), dict):
+        raise AnalysisError("Не удалось получить метаданные")
+    return response["result"]
