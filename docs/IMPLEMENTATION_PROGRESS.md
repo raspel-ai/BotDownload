@@ -28,3 +28,12 @@ Updated: 2026-11-06. Branch: `feat/v1-secure-worker-ipc-20261106`. Base: `restor
 Implement one integrated secure runtime slice: replace worker_ipc with bounded versioned JSONL protocol and validated payloads; remove all SQLite access from worker; wire real yt-dlp inspect exclusively in worker with process limits; add bot IPC client and replace bot metadata direct execution; remove bot worker auto-spawn; repair shared runtime-dir lifecycle and unit writable paths. Add integration tests and execute them before enabling downloads. Then implement download/FFmpeg, cancellation, queue, Telegram delivery, recovery, installation and rollback.
 
 Do not mark service ready or ask for VPS acceptance until integrated scenario is demonstrably functional.
+
+## 2026-11-06 subsequent implementation
+- `a5b31752`: bot IPC client replaced with versioned JSONL request API.
+- `42798c81`: worker entrypoint no longer passes SQLite path; default socket moved to /run/botdownload.
+- `8b53cb3d`: replaced legacy SQLite-backed IPC server with UID-authenticated inspect/status/cancel/download action parsing and bounded messages; real inspect executes yt-dlp in worker. Download and safe cancel remain unimplemented; no success is faked.
+- `90bb82f5`: bot metadata.inspect delegates to protected worker IPC.
+- `2fdc07b1`: bot main no longer starts OfflineWorkerSupervisor.
+- **NOT TESTED**: integration, systemd, yt-dlp, Telegram, VPS. Worker metadata module still contains legacy imports; older worker modules remain and must be retired. New IPC status client callers may need migration. Worker inspect currently uses asyncio.to_thread and cannot forcibly terminate a stuck extractor; must replace with cancellable process isolation before deployment.
+- Next: audit runtime imports and test failures, replace thread inspect with supervised subprocess/process group; implement download and FFmpeg with safe cancellation, then queues/delivery/recovery; repair unit lifecycle and deployment paths.
