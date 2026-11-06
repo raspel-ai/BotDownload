@@ -75,6 +75,7 @@ class WorkerState:
         self.jobs = {}
         self.inspect_slots = asyncio.Semaphore(2)
         self.download_slot = asyncio.Lock()
+        self.jobs_lock = asyncio.Lock()
 
     async def inspect(self, task_id, url):
         async with self.inspect_slots:
@@ -111,13 +112,14 @@ class WorkerState:
             return {"status": "cancelled"}
         if action == "download":
             return {"status": "failed", "error": "Protected download pipeline not yet implemented"}
-        existing = self.jobs.get(task_id)
-        if existing:
-            return {"status": existing["status"], **({"result": existing["result"]} if "result" in existing else {})}
-        job = {"status": "running"}
-        self.jobs[task_id] = job
-        running = asyncio.create_task(self.inspect(task_id, payload["url"]))
-        job["task"] = running
+        async with self.jobs_lock:
+            existing = self.jobs.get(task_id)
+            if existing:
+                return {"status": existing["status"], **({"result": existing["result"]} if "result" in existing else {})}
+            job = {"status": "running"}
+            self.jobs[task_id] = job
+            running = asyncio.create_task(self.inspect(task_id, payload["url"]))
+            job["task"] = running
         try:
             result = await asyncio.shield(running)
             job["status"] = "completed"
