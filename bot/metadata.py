@@ -3,11 +3,10 @@ import asyncio
 
 import yt_dlp
 
-from .telegram_handlers import validate_media_url
+from .url_validation import validate_url, URLValidationError
 from .local_tools import yt_dlp_js_options
 from .media_variants import available_variants, selected_language
 from .network_security import UnsafeNetworkTarget, validate_public_https_target
-from .telegram_handlers import ALLOWED_HOSTS
 
 
 class AnalysisError(Exception):
