@@ -10,8 +10,6 @@ User=tgbot
 Group=tgbot
 WorkingDirectory=/opt/botdownload
 Environment=BOTDOWNLOAD_WORKER_SOCKET=/run/botdownload/worker.sock
-RuntimeDirectory=botdownload
-RuntimeDirectoryMode=0700
 ExecStart=/opt/botdownload/.venv/bin/python -m bot.main
 Restart=on-failure
 RestartSec=3
@@ -19,7 +17,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/run/botdownload /opt/botdownload/data /opt/botdownload/files
+ReadWritePaths=/opt/botdownload/data /opt/botdownload/files /opt/botdownload/logs
 
 [Install]
 WantedBy=multi-user.target
