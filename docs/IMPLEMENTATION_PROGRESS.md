@@ -44,3 +44,9 @@ Do not mark service ready or ask for VPS acceptance until integrated scenario is
 - IPC request ID matching corrected (68f78cf4); protocol rejection tests added (466649a6).
 - Tests NOT RUN: container cannot resolve github.com for git clone. New test suite and real worker process still need execution.
 - Remaining: secure download and ffmpeg, confirmed cancellation, DB queue/worker orchestration, recovery, delivery, installation, VPS systemd isolation verification. No release claim.
+
+## 2026-11-06 download implementation slice
+- ea9b4bde: worker-only media subprocess runs yt-dlp and FFmpeg, probes duration and bounds output size.
+- bd3e0831: IPC download dispatch with single download lock, private task workspace, cleanup on failure/cancel.
+- e7707c40: download lifecycle tests (mocked execution) added, NOT RUN.
+- Not ready: video codec compliance, audio preference, secure filesystem and subprocess review, queue consumer, Telegram delivery, recovery, VPS acceptance. Do not deploy yet.
