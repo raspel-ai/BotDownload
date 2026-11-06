@@ -6,9 +6,9 @@ The kernel sandbox remains a separate mandatory deployment prerequisite.
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from .telegram_handlers import validate_media_url
+from .url_validation import validate_url, URLValidationError
 
-FORMATS = frozenset(("480p", "720p", "1080p", "MP3"))
+FORMATS = frozenset(("480p", "720p", "1080p", "MP3", "video", "audio"))
 
 
 class AdmissionDenied(ValueError):
@@ -28,9 +28,19 @@ class ApprovedDownload:
 
 
 def admit_inspect(url: str) -> ApprovedInspect:
-    if not validate_media_url(url):
-        raise AdmissionDenied("Недопустимая ссылка")
-    return ApprovedInspect(url)
+    try:
+        validated = validate_url(url)
+    except URLValidationError as exc:
+        raise AdmissionDenied("Недопустимая ссылка") from exc
+    return ApprovedInspect(validated.url)
+
+
+def _valid_url(url: str) -> bool:
+    try:
+        validate_url(url)
+        return True
+    except URLValidationError:
+        return False
 
 
 def admit_download(db, *, task_id: int) -> ApprovedDownload:
@@ -63,6 +73,6 @@ def admit_download(db, *, task_id: int) -> ApprovedDownload:
             or status not in ("queued", "downloading")
             or quality not in FORMATS or not isinstance(variants, list)
             or quality not in variants or url != card_url
-            or not validate_media_url(url)):
+            or not _valid_url(url)):
         raise AdmissionDenied("Задание не соответствует утверждённой карточке")
     return ApprovedDownload(task_id, url, quality)
