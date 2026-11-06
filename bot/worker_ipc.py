@@ -108,8 +108,9 @@ class WorkerState:
                 pass
             # Cancellation is confirmed only after the supervised subprocess
             # has been killed and reaped by run_json_subprocess.
-            job["status"] = "cancelled"
-            return {"status": "cancelled"}
+            if job["status"] not in ("completed", "failed"):
+                job["status"] = "cancelled"
+            return {"status": job["status"]}
         if action == "download":
             return {"status": "failed", "error": "Protected download pipeline not yet implemented"}
         async with self.jobs_lock:
@@ -122,8 +123,9 @@ class WorkerState:
             job["task"] = running
         try:
             result = await asyncio.shield(running)
-            job["status"] = "completed"
-            job["result"] = result
+            if job["status"] == "running":
+                job["status"] = "completed"
+                job["result"] = result
             return {"status": "completed", "result": result}
         except asyncio.CancelledError:
             if running.cancelled():
@@ -138,8 +140,9 @@ class WorkerState:
             job["status"] = "cancelled"
             raise
         except Exception:
-            job["status"] = "failed"
-            return {"status": "failed", "error": "Inspection failed"}
+            if job["status"] == "running":
+                job["status"] = "failed"
+            return {"status": job["status"], "error": "Inspection failed"}
 
 
 async def handle_connection(reader, writer, *, allowed_uid, state):
