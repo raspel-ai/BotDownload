@@ -16,9 +16,7 @@ from .telegram_handlers import router
 from .startup_recovery import recover_before_workers
 from .ready_cleanup import cleanup_terminal_files
 from .upload_queue import run_upload_queue
-from .worker_supervisor import OfflineWorkerSupervisor
 from .queue_maintenance import run_queue_maintenance
-from .worker_crash_recovery import reconcile_confirmed_worker_exit
 
 
 async def run_bot(settings) -> None:
@@ -30,14 +28,7 @@ async def run_bot(settings) -> None:
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
     stop = asyncio.Event()
-    worker = OfflineWorkerSupervisor(Path("data/bot.sqlite"))
-    try:
-        await worker.start()
-    except BaseException:
-        await bot.session.close()
-        raise
-    logging.info("Offline worker запущен автоматически (загрузки отключены)")
-    upload = asyncio.create_task(run_upload_queue(
+    logging.info("Worker управляется отдельным постоянным systemd-юнитом")    upload = asyncio.create_task(run_upload_queue(
         stop=stop, bot=bot, db_path=Path("data/bot.sqlite"),
         configured_download_dir=settings.data["storage"]["download_dir"],
         max_bytes=settings.data["telegram"]["max_upload_size_mb"][telegram["api_mode"]] * 1024 * 1024,
@@ -51,10 +42,9 @@ async def run_bot(settings) -> None:
         stop=stop, db_path=Path("data/bot.sqlite"),
     ))
     polling = asyncio.create_task(dispatcher.start_polling(bot))
-    worker_exit = asyncio.create_task(worker.wait())
     try:
         done, _ = await asyncio.wait(
-            (polling, worker_exit, upload, maintenance),
+            (polling, upload, maintenance),
             return_when=asyncio.FIRST_COMPLETED,
         )
         for service, label in ((upload, 'Telegram upload queue'),
@@ -66,22 +56,12 @@ async def run_bot(settings) -> None:
                 if failure is not None:
                     raise RuntimeError(f'{label} завершился с ошибкой') from failure
                 raise RuntimeError(f'{label} неожиданно завершился')
-        if worker_exit in done and polling not in done:
-            failed = reconcile_confirmed_worker_exit(Path("data/bot.sqlite"))
-            logging.error("Worker завершился: %d активных задач помечено failed", failed)
-            raise RuntimeError("Offline worker неожиданно завершился")
         await polling
     finally:
         if not polling.done():
             polling.cancel()
             try:
                 await polling
-            except asyncio.CancelledError:
-                pass
-        if not worker_exit.done():
-            worker_exit.cancel()
-            try:
-                await worker_exit
             except asyncio.CancelledError:
                 pass
         stop.set()
@@ -101,10 +81,7 @@ async def run_bot(settings) -> None:
             except asyncio.CancelledError:
                 pass
         finally:
-            try:
-                await worker.stop()
-            finally:
-                await bot.session.close()
+            await bot.session.close()
 
 
 def main() -> None:
