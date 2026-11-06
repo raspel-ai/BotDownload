@@ -1,33 +1,18 @@
 """Telegram commands and conservative link intake."""
-from urllib.parse import urlsplit
+from .url_validation import validate_url, URLValidationError
 
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
 router = Router()
-ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "instagram.com", "www.instagram.com", "tiktok.com", "www.tiktok.com", "m.tiktok.com"}
 
 
 def validate_media_url(value: str) -> bool:
-    """Require HTTPS, a supported host, and a single unambiguous URL."""
-    if not isinstance(value, str) or len(value) > 2048 or any(c.isspace() or ord(c) < 32 for c in value):
-        return False
     try:
-        parsed = urlsplit(value)
-        host = (parsed.hostname or "").lower()
-        if (parsed.scheme != "https" or not host or parsed.username or parsed.password
-                or parsed.port not in (None, 443) or parsed.fragment
-                or "\\" in value or not parsed.path.startswith("/")
-                or any(seq in value.lower() for seq in ("%0a", "%0d", "%00", "%09"))):
-            return False
-        if host not in ALLOWED_HOSTS:
-            return False
-        # Disallow non-ASCII domain spellings and unusual URL authorities.
-        if not host.isascii() or "%" in parsed.netloc or "@" in parsed.netloc:
-            return False
+        validate_url(value)
         return True
-    except ValueError:
+    except URLValidationError:
         return False
 
 
@@ -81,8 +66,8 @@ async def link(message: Message) -> None:
         approved = admit_inspect(value)
         info = await inspect(approved.url, timeout=settings.data["timeouts"]["analysis_timeout_seconds"])
     except (AnalysisError, AdmissionDenied) as exc:
-        await progress.edit_text(f"❌ {exc}")
-        return
+        await progress.edit_text("⚠️ Не удалось определить метаданные. Можно попробовать скачать видео или аудио.")
+        info = {}
     from .media_variants import size_label
     duration = info.get("duration")
     duration_text = (f"{int(duration) // 60}:{int(duration) % 60:02d}"
@@ -105,17 +90,22 @@ async def link(message: Message) -> None:
         size = size_label(variant["size"], variant["approximate"])
         label = f"🎵 MP3 ({size})" if kind == "mp3" else f"{quality} ({size})"
         choices.append(InlineKeyboardButton(text=label, callback_data=f"preview:{quality}"))
+    if not choices:
+        choices = [
+            InlineKeyboardButton(text="Скачать видео", callback_data="preview:video"),
+            InlineKeyboardButton(text="Скачать аудио", callback_data="preview:audio"),
+        ]
     for index in range(0, len(choices), 2):
         buttons.append(choices[index:index + 2])
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="preview:cancel")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    card = (f"{info['title']} | {uploader}\n"
+    card = (f"{info.get('title') or 'Видео'} | {uploader}\n"
             f"Дата публикации: {published}\n"
             f"Продолжительность: {duration_text}\n"
             f"Просмотров: {views_text}\n\n"
             f"Выбранный язык: {info.get('language', 'Язык аудио не определён')}\n\n"
             "Выберите качество:" if len(buttons) > 1 else
-            f"{info['title']}\nДоступные варианты не определены.")
+            f"{info.get('title') or 'Видео'}\nДоступные качества не определены.")
     # Do not ask Telegram to fetch arbitrary third-party URLs.
     # Only YouTube's dedicated thumbnail CDN is accepted for this preview.
     thumbnail = info.get("thumbnail", "")
@@ -142,7 +132,7 @@ async def link(message: Message) -> None:
     if sent is None:
         await progress.edit_text(card, reply_markup=keyboard)
         sent = progress
-    if choices and message.from_user:
+    if message.from_user:
         from pathlib import Path
         from .storage import database, save_preview
         with database(Path("data/bot.sqlite")) as db:
@@ -152,7 +142,7 @@ async def link(message: Message) -> None:
                          variants=[button.callback_data.removeprefix("preview:") for button in choices])
 
 
-@router.callback_query(F.data.in_({"preview:480p", "preview:720p", "preview:1080p", "preview:MP3"}))
+@router.callback_query(F.data.in_({"preview:480p", "preview:720p", "preview:1080p", "preview:MP3", "preview:video", "preview:audio"}))
 async def preview_format(callback: CallbackQuery) -> None:
     from pathlib import Path
     from .storage import database, select_preview, enqueue_task
