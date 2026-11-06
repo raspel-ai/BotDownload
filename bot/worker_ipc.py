@@ -78,8 +78,13 @@ class WorkerState:
 
     async def inspect(self, task_id, url):
         async with self.inspect_slots:
-            from .metadata import _extract
-            return await asyncio.wait_for(asyncio.to_thread(_extract, url), timeout=60)
+            from .metadata_process import run_json_subprocess
+            import sys
+            return await run_json_subprocess(
+                [sys.executable, "-m", "bot.metadata_worker", url],
+                cwd=Path(__file__).resolve().parent.parent,
+                timeout_seconds=60, max_output_bytes=60000,
+            )
 
     async def dispatch(self, message):
         action, task_id, payload = message["action"], message["task_id"], message["payload"]
