@@ -49,3 +49,28 @@ async def test_inspect_repeated_task_is_not_reexecuted():
     assert (await state.dispatch(request))["status"] == "completed"
     assert (await state.dispatch(request))["status"] == "completed"
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_id_creates_only_one_inspect():
+    state = WorkerState()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    count = 0
+
+    async def fake_inspect(task_id, url):
+        nonlocal count
+        count += 1
+        started.set()
+        await release.wait()
+        return {"title": "example"}
+
+    state.inspect = fake_inspect
+    request = msg("inspect", payload={"url": "https://youtu.be/dQw4w9WgXcQ"})
+    first = asyncio.create_task(state.dispatch(request))
+    await asyncio.wait_for(started.wait(), 2)
+    second = await state.dispatch(request)
+    assert second["status"] == "running"
+    release.set()
+    assert (await first)["status"] == "completed"
+    assert count == 1
