@@ -1,0 +1,25 @@
+[Unit]
+Description=BotDownload Telegram bot
+After=network-online.target tgbot-worker.service
+Wants=network-online.target
+Requires=tgbot-worker.service
+
+[Service]
+Type=simple
+User=tgbot
+Group=tgbot
+WorkingDirectory=/opt/botdownload
+Environment=BOTDOWNLOAD_WORKER_SOCKET=/run/botdownload/worker.sock
+RuntimeDirectory=botdownload
+RuntimeDirectoryMode=0700
+ExecStart=/opt/botdownload/.venv/bin/python -m bot.main
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/botdownload /opt/botdownload/data /opt/botdownload/files
+
+[Install]
+WantedBy=multi-user.target
