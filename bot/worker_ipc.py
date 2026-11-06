@@ -89,25 +89,54 @@ class WorkerState:
     async def dispatch(self, message):
         action, task_id, payload = message["action"], message["task_id"], message["payload"]
         if action == "status":
-            return {"status": self.jobs.get(task_id, {}).get("status", "not_found")}
+            job = self.jobs.get(task_id)
+            return {"status": job["status"] if job else "not_found"}
         if action == "cancel":
             job = self.jobs.get(task_id)
             if job is None:
                 return {"status": "not_found"}
             if job["status"] in ("completed", "failed", "cancelled"):
                 return {"status": job["status"]}
-            return {"status": "failed", "error": "Cancellation not yet safely implemented"}
+            running = job.get("task")
+            if running is None:
+                return {"status": "failed", "error": "Job has no cancellable process"}
+            running.cancel()
+            try:
+                await running
+            except asyncio.CancelledError:
+                pass
+            # Cancellation is confirmed only after the supervised subprocess
+            # has been killed and reaped by run_json_subprocess.
+            job["status"] = "cancelled"
+            return {"status": "cancelled"}
         if action == "download":
             return {"status": "failed", "error": "Protected download pipeline not yet implemented"}
-        if task_id in self.jobs:
-            return {"status": self.jobs[task_id]["status"], "result": self.jobs[task_id].get("result")}
-        self.jobs[task_id] = {"status": "running"}
+        existing = self.jobs.get(task_id)
+        if existing:
+            return {"status": existing["status"], **({"result": existing["result"]} if "result" in existing else {})}
+        job = {"status": "running"}
+        self.jobs[task_id] = job
+        running = asyncio.create_task(self.inspect(task_id, payload["url"]))
+        job["task"] = running
         try:
-            result = await self.inspect(task_id, payload["url"])
-            self.jobs[task_id] = {"status": "completed", "result": result}
+            result = await asyncio.shield(running)
+            job["status"] = "completed"
+            job["result"] = result
             return {"status": "completed", "result": result}
+        except asyncio.CancelledError:
+            if running.cancelled():
+                job["status"] = "cancelled"
+                return {"status": "cancelled"}
+            # A disconnected client must not abandon an active process.
+            running.cancel()
+            try:
+                await running
+            except asyncio.CancelledError:
+                pass
+            job["status"] = "cancelled"
+            raise
         except Exception:
-            self.jobs[task_id] = {"status": "failed"}
+            job["status"] = "failed"
             return {"status": "failed", "error": "Inspection failed"}
 
 
