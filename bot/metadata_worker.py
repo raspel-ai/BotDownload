@@ -7,12 +7,16 @@ import json
 import sys
 
 from .metadata import _extract
-from .telegram_handlers import ALLOWED_HOSTS, validate_media_url
+from .url_validation import validate_url, URLValidationError
 
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 1 or not validate_media_url(args[0]):
+    if len(args) != 1:
+        return 2
+    try:
+        validate_url(args[0])
+    except URLValidationError:
         return 2
     try:
         # Repeat literal URL validation; DNS may legitimately return Fake-IP.
