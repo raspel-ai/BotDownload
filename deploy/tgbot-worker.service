@@ -1,0 +1,26 @@
+[Unit]
+Description=BotDownload protected media worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tgbot
+Group=tgbot
+WorkingDirectory=/opt/botdownload
+Environment=BOTDOWNLOAD_WORKER_SOCKET=/run/botdownload/worker.sock
+RuntimeDirectory=botdownload
+RuntimeDirectoryMode=0700
+ExecStart=/opt/botdownload/.venv/bin/python -m bot.worker_service
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/botdownload /opt/botdownload/files /opt/botdownload/data/tmp
+IPAddressDeny=127.0.0.0/8
+IPAddressDeny=::1/128
+
+[Install]
+WantedBy=multi-user.target
