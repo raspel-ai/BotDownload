@@ -12,7 +12,7 @@ from .url_validation import validate_url, URLValidationError
 
 MAX_MESSAGE = 65536
 VALID_ACTIONS = frozenset(("inspect", "download", "cancel", "status"))
-REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}\\Z")
+REQUEST_ID = re.compile("[A-Za-z0-9_-]{1,64}$")
 
 
 class WorkerProtocolError(ValueError):
