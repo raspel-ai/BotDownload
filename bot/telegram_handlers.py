@@ -97,7 +97,8 @@ async def link(message: Message) -> None:
         ]
     for index in range(0, len(choices), 2):
         buttons.append(choices[index:index + 2])
-    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="preview:cancel")])
+    if info.get("variants"):
+        buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="preview:cancel")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     card = (f"{info.get('title') or 'Видео'} | {uploader}\n"
             f"Дата публикации: {published}\n"
