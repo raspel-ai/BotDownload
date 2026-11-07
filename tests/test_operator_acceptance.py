@@ -85,10 +85,12 @@ def test_installation_check_does_not_read_or_change_secret_contents(tmp_path,mon
     spec=importlib.util.spec_from_file_location('permissions_helper',root/'scripts/check_installation_permissions.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     monkeypatch.chdir(tmp_path);tmp_path.chmod(0o700)
-    Path('bot').mkdir(mode=0o700);Path('data').mkdir(mode=0o700)
+    Path('bot').mkdir(mode=0o700);Path('data').mkdir(mode=0o700);Path('logs').mkdir(mode=0o700)
     Path('config.yaml').write_text('private config content');Path('config.yaml').chmod(0o600)
     Path('.env').write_text('TELEGRAM_BOT_TOKEN=DO_NOT_PRINT_ME');Path('.env').chmod(0o600)
     Path('.venv/bin').mkdir(parents=True);Path('.venv/bin/python').symlink_to(sys.executable)
+    # This test concerns secret handling, not privileged ownership setup.
+    monkeypatch.setattr(module,'check_source',lambda path:True)
     assert module.main()==0
     assert 'DO_NOT_PRINT_ME' not in capsys.readouterr().out
     assert Path('.env').read_text()=='TELEGRAM_BOT_TOKEN=DO_NOT_PRINT_ME'

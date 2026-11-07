@@ -38,7 +38,7 @@ MP4/MP3 и транспорт Telegram с тестовыми ответами. �
   оригинальная. Результат: MP4 H.264/AAC-LC или MP3 VBR `q:a=0`.
 - Изменяемые настройки — `config.yaml`, секрет Telegram — `.env`. Worker не
   загружает `.env`; задания не содержат токенов, proxy, cookies или произвольных путей.
-- По умолчанию API `local`. `cloud` использует только `https://api.telegram.org`.
+- По умолчанию API `cloud`; `local` выбирается явно. `cloud` использует только `https://api.telegram.org`.
   Автоматического переключения нет. Локальный Bot API Server устанавливается
   оператором отдельно и не входит в поставку. `aiogram` использует `is_local=True`;
   файлы отправляются multipart, абсолютные локальные пути не превращаются в URL.
@@ -65,8 +65,9 @@ FFmpeg/ffprobe — системный пакет Debian; локально 7.1.5.
 Первый внешний этап — **Debian 13 + cloud**, официальный `https://api.telegram.org`.
 Local Bot API Server пока не устанавливается. После облачного этапа отдельно
 проверяются local и Debian 12/Fake-IP; их статус пока INCONCLUSIVE.
-Нормативное значение по умолчанию в образце остаётся `local`; для первого испытания
-оператор явно меняет **локальный** `telegram.api_mode` на `cloud`.
+По отдельному поручению владельца default в `config.yaml` изменён на `cloud`.
+Нормативные документы не редактировались; их указание default `local` остаётся
+расхождением, явно разрешённым этим поручением. Явный выбор `local` поддерживается.
 
 Приёмка идёт через SSH небольшими шагами: команда → обезличенный результат →
 разбор → следующий шаг. Не выполняйте весь справочник одним скриптом. SSH-доступ
@@ -96,14 +97,15 @@ Local Bot API Server пока не устанавливается. После о
 
    ```bash
    sudo useradd --system --no-create-home --home-dir /opt/botdownload --shell /usr/sbin/nologin tgbot
-   sudo install -d -o tgbot -g tgbot -m 700 /opt/botdownload
+   sudo install -d -o root -g root -m 755 /opt/botdownload
    ```
 
-3. Получите код от имени `tgbot`. Ниже указана рабочая ветка; для выпуска следует
+3. Получите код от имени администратора. Исходники и `.venv` не должны
+   принадлежать `tgbot` или быть доступны ему на запись. Ниже указана рабочая ветка; для выпуска следует
    выбрать проверенный коммит. Ожидается чистая рабочая копия без секретов.
 
    ```bash
-   sudo -u tgbot git clone --branch dev/v1-completion https://github.com/raspel-ai/BotDownload.git /opt/botdownload
+   sudo git clone --branch dev/v1-completion https://github.com/raspel-ai/BotDownload.git /opt/botdownload
    ```
 
 4. Перейдите в каталог проекта. Создайте venv и установите зафиксированные зависимости.
@@ -111,11 +113,24 @@ Local Bot API Server пока не устанавливается. После о
 
    ```bash
    cd /opt/botdownload
-   sudo -u tgbot chmod 700 data
-   sudo -u tgbot python3 -m venv .venv
-   sudo -u tgbot .venv/bin/python -m pip install -r requirements.lock
-   sudo -u tgbot .venv/bin/python -m pip check
+   sudo python3 -m venv .venv
+   sudo .venv/bin/python -m pip install -r requirements.lock
+   sudo .venv/bin/python -m pip check
    ```
+
+   Код и venv остаются у администратора. **До первого запуска любой службы**
+   создайте только рабочие каталоги, включая `logs`: бот не сможет создать его
+   в root-owned корне. Существующие каталоги сначала проверьте; при symlink или
+   неожиданном владельце остановитесь. Не выполняйте рекурсивный chown проекта.
+   Команда сохраняет содержимое каталогов и не меняет владельца исходников/venv.
+
+   ```bash
+   sudo install -d -o tgbot -g tgbot -m 0700 /opt/botdownload/data /opt/botdownload/data/tmp /opt/botdownload/logs /opt/botdownload/backups /opt/botdownload/files
+   sudo stat -c '%n %U:%G %a' /opt/botdownload/logs
+   ```
+
+   Ожидается `/opt/botdownload/logs tgbot:tgbot 700`. При ошибке не запускайте
+   службы: проверьте путь, владельца и права, не открывая запись на весь проект.
 
 5. Скопируйте пример секрета и заполните файл **локальным редактором на VPS**.
    Не публикуйте содержимое. `.env` должен читаться только `tgbot`.
@@ -125,7 +140,7 @@ Local Bot API Server пока не устанавливается. После о
    ```bash
    sudo -u tgbot test ! -e .env
    sudo -u tgbot test ! -L .env
-   sudo -u tgbot install -m 600 .env.example .env
+   sudo install -o tgbot -g tgbot -m 600 .env.example .env
    sudo -u tgbot nano .env
    ```
 
@@ -137,6 +152,7 @@ Local Bot API Server пока не устанавливается. После о
    у обоих сервисов, по умолчанию `/run/botdownload/worker.sock`; не `/tmp`.
 
    ```bash
+   sudo chown tgbot:tgbot config.yaml
    sudo -u tgbot chmod 600 config.yaml
    sudo -u tgbot nano config.yaml
    sudo -u tgbot .venv/bin/python scripts/check_installation_permissions.py
@@ -214,7 +230,7 @@ DNS и маршруты не меняются. `PrivateNetwork=yes` и обхо�
    sudo sha256sum /usr/local/libexec/botdownload/confirm_worker_isolation.py /usr/local/libexec/botdownload/isolation.py
    ```
 
-   Root **не запускает** `.venv/bin/python` и скрипты из доступной `tgbot` на запись
+   Для подтверждения root **не запускает** `.venv/bin/python` и скрипты из доступной `tgbot` на запись
    копии. Helper использует системный Python в isolated mode и загружает только
    проверенную root-owned копию `isolation.py`; проверяет владельцев и права родителей.
 
@@ -345,8 +361,8 @@ inspect/download будут отклонены. Никогда не снимай
 
    ```bash
    cd /opt/botdownload
-   sudo -u tgbot git status --short --branch
-   sudo -u tgbot git ls-remote origin
+   sudo git status --short --branch
+   sudo git ls-remote origin
    ```
 
 2. Остановите оба сервиса и проверьте завершение процессов. Worker останавливает
@@ -372,7 +388,7 @@ inspect/download будут отклонены. Никогда не снимай
    приватными правами; не добавляйте их в Git.
 
    ```bash
-   sudo -u tgbot git rev-parse HEAD
+   sudo git rev-parse HEAD
    ```
 
 5. Получите проверенное обновление. `fetch` сам не заменяет рабочие файлы.
@@ -382,11 +398,15 @@ inspect/download будут отклонены. Никогда не снимай
    новой версии. Не перезаписывайте свои ID/endpoint/секреты образцом.
 
    ```bash
-   sudo -u tgbot git fetch origin
-   sudo -u tgbot git switch --detach ПРОВЕРЕННЫЙ_SHA
+   sudo git fetch origin
+   sudo git switch --detach ПРОВЕРЕННЫЙ_SHA
    ```
 
-6. Обновите зависимости и проверьте конфигурацию. При переходе с прежней ветки
+6. Обновите зависимости от имени администратора и проверьте конфигурацию.
+   До запуска проверьте рабочие каталоги, включая `logs`. Для отсутствующего logs:
+   `sudo install -d -o tgbot -g tgbot -m 0700 /opt/botdownload/logs`.
+   Существующие каталоги сначала проверьте; не выполняйте рекурсивный chown
+   исходников или `.venv`. Локальный явный выбор `api_mode` при обновлении сохраняется. При переходе с прежней ветки
    удалите `storage.download_dir` из локального YAML и задайте `files_dir`,
    `keep_downloaded_files` и раздел `worker` по текущему образцу. Старые алиасы не
    поддерживаются. Старые таблицы/файлы сохраняются; квоты, блокировки и задачи
@@ -395,8 +415,8 @@ inspect/download будут отклонены. Никогда не снимай
    до инвентаризации и завершения переноса.
 
    ```bash
-   sudo -u tgbot .venv/bin/python -m pip install -r requirements.lock
-   sudo -u tgbot .venv/bin/python -m pip check
+   sudo .venv/bin/python -m pip install -r requirements.lock
+   sudo .venv/bin/python -m pip check
    sudo -u tgbot .venv/bin/python -m bot.admin doctor
    ```
 
