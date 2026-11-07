@@ -24,7 +24,8 @@ class Broker:
         except ValueError as exc:
             u=None
             error=str(exc)
-        result,jid=self.store.intake(user,chat,input_id,u,self.config['rate_limit'])
+        result,jid=self.store.intake(user,chat,input_id,u,self.config['rate_limit'],
+                                     trusted_users=self.config['trusted_users'])
         return result,jid,error
 
     def payload(self, job, action):

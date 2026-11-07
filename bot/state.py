@@ -241,36 +241,35 @@ class Store:
             db.execute('UPDATE jobs SET execution_id=? WHERE id=?',(eid,job_id))
             return eid
 
-    def rate_allow(self, user, cfg, now=None):
+    @staticmethod
+    def _link_allowed(db, user, cfg, now, trusted_users):
+        # Trust comes from the bot's validated config, never from Telegram input.
+        # Do not count trusted attempts or mutate their existing bans.
+        if user in trusted_users:
+            return True
+        ban = db.execute('SELECT until FROM bans_v1 WHERE user_id=?',(user,)).fetchone()
+        if ban and ban[0] > now:
+            return False
+        db.execute('DELETE FROM attempts WHERE at<=?',(now-cfg['window_seconds'],))
+        count = db.execute('SELECT count(*) FROM attempts WHERE user_id=?',(user,)).fetchone()[0]
+        if count >= cfg['link_attempts']:
+            db.execute('INSERT OR REPLACE INTO bans_v1 VALUES(?,?)',(user,now+cfg['ban_duration_seconds']))
+            return False
+        db.execute('INSERT INTO attempts VALUES(?,?)',(user,now))
+        return True
+
+    def rate_allow(self, user, cfg, now=None, *, trusted_users=()):
         now = time.time() if now is None else now
         with self.db() as db:
-            ban = db.execute('SELECT until FROM bans_v1 WHERE user_id=?',(user,)).fetchone()
-            if ban and ban[0] > now:
-                return False
-            db.execute('DELETE FROM attempts WHERE at<=?',(now-cfg['window_seconds'],))
-            count = db.execute('SELECT count(*) FROM attempts WHERE user_id=?',(user,)).fetchone()[0]
-            if count >= cfg['link_attempts']:
-                db.execute('INSERT OR REPLACE INTO bans_v1 VALUES(?,?)',(user,now+cfg['ban_duration_seconds']))
-                return False
-            db.execute('INSERT INTO attempts VALUES(?,?)',(user,now))
-            return True
+            return self._link_allowed(db,user,cfg,now,trusted_users)
 
-    def intake(self,user,chat,input_id,url,cfg):
+    def intake(self,user,chat,input_id,url,cfg,*,trusted_users=()):
         now=time.time()
         with self.db() as db:
             if db.execute('SELECT 1 FROM received_updates WHERE chat_id=? AND message_id=?',(chat,input_id)).fetchone():
                 return 'duplicate',None
-            ban=db.execute('SELECT until FROM bans_v1 WHERE user_id=?',(user,)).fetchone()
-            db.execute('DELETE FROM attempts WHERE at<=?',(now-cfg['window_seconds'],))
-            count=db.execute('SELECT count(*) FROM attempts WHERE user_id=?',(user,)).fetchone()[0]
-            if ban and ban[0]>now:
-                result='blocked'
-            elif count>=cfg['link_attempts']:
-                db.execute('INSERT OR REPLACE INTO bans_v1 VALUES(?,?)',(user,now+cfg['ban_duration_seconds']))
-                result='blocked'
-            else:
-                db.execute('INSERT INTO attempts VALUES(?,?)',(user,now))
-                result='accepted' if url else 'invalid'
+            allowed=self._link_allowed(db,user,cfg,now,trusted_users)
+            result=('accepted' if url else 'invalid') if allowed else 'blocked'
             db.execute('INSERT INTO received_updates VALUES(?,?,?)',(chat,input_id,result))
             jid=None
             if result=='accepted':
