@@ -40,6 +40,9 @@ Deno 2.9.8. Дополнительно регрессия выполнялась
 | Рестарты постоянных юнитов на всех этапах реального цикла | INCONCLUSIVE | Локальное восстановление/IPC проверены; VPS/Telegram приёмка не выполнялась |
 | Debian 12 с Fake-IP без изменения маршрутов/DNS | INCONCLUSIVE | Такой VPS не подключён |
 
+GitHub Actions также завершился PASS для коммита `74a4408` (Python 3.13):
+https://github.com/raspel-ai/BotDownload/actions/runs/42358809756
+
 ## Выполненные команды
 
 - `work/venv313/bin/python -m pytest -q`
