@@ -1,0 +1,26 @@
+[Unit]
+Description=BotDownload Telegram broker
+After=network-online.target tgbot-worker.service
+Wants=network-online.target tgbot-worker.service
+
+[Service]
+Type=simple
+User=tgbot
+Group=tgbot
+WorkingDirectory=/opt/botdownload
+ExecStart=/opt/botdownload/.venv/bin/python -m bot
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+LockPersonality=true
+KillMode=control-group
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target

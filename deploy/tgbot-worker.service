@@ -1,0 +1,31 @@
+[Unit]
+Description=BotDownload protected media worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tgbot
+Group=tgbot
+WorkingDirectory=/opt/botdownload
+ExecStart=/opt/botdownload/.venv/bin/python -m bot.worker
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=botdownload
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=127.0.0.0/8
+IPAddressDeny=::1/128
+KillMode=control-group
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target

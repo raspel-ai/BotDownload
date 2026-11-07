@@ -1,153 +1,89 @@
-"""Stage 2 entrypoint: initialize storage and start Telegram polling."""
+"""Main bot process: state, dispatch and delivery; never starts media tools."""
 import asyncio
+import fcntl
 import logging
 from logging.handlers import RotatingFileHandler
+import os
 from pathlib import Path
-import shutil
-import sys
+import re
+import signal
+from .broker import Broker
+from .client import WorkerClient
+from .config import load_settings,ConfigurationError
+from .files import private_dir
+from .state import Store,StateUnavailable
+from .telegram import Telegram
 
-from aiogram import Bot, Dispatcher
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.client.telegram import TelegramAPIServer
+class Redaction(logging.Filter):
+    def filter(self, record):
+        record.msg = re.sub(r'https?://\S+', '[URL]', record.getMessage())
+        record.msg = re.sub(r'\b\d{6,}:[A-Za-z0-9_-]+', '[TOKEN]', record.msg)
+        record.args = ()
+        # Third-party tracebacks can contain full URLs/secrets; log safe categories only.
+        if record.exc_info:
+            record.msg += ' ('+record.exc_info[0].__name__+')'
+            record.exc_info = None
+        return True
 
-from .config import ConfigurationError, load_settings
-from .database import initialize
-from .telegram_handlers import router
-from .startup_recovery import recover_before_workers
-from .ready_cleanup import cleanup_terminal_files
-from .upload_queue import run_upload_queue
-from .worker_supervisor import OfflineWorkerSupervisor
-from .queue_maintenance import run_queue_maintenance
-from .worker_crash_recovery import reconcile_confirmed_worker_exit
-
-
-async def run_bot(settings) -> None:
-    telegram = settings.data["telegram"]
-    session = None
-    if telegram["api_mode"] == "local":
-        session = AiohttpSession(api=TelegramAPIServer.from_base(telegram["api_base_urls"]["local"]))
-    bot = Bot(token=settings.token, session=session)
-    dispatcher = Dispatcher()
-    dispatcher.include_router(router)
+async def run(settings):
+    config = settings.data
+    store = Store()
+    telegram = Telegram(settings)
     stop = asyncio.Event()
-    worker = OfflineWorkerSupervisor(Path("data/bot.sqlite"))
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM,signal.SIGINT):
+        loop.add_signal_handler(sig,stop.set)
     try:
-        await worker.start()
-    except BaseException:
-        await bot.session.close()
-        raise
-    logging.info("Offline worker запущен автоматически (загрузки отключены)")
-    upload = asyncio.create_task(run_upload_queue(
-        stop=stop, bot=bot, db_path=Path("data/bot.sqlite"),
-        configured_download_dir=settings.data["storage"]["download_dir"],
-        max_bytes=settings.data["telegram"]["max_upload_size_mb"][telegram["api_mode"]] * 1024 * 1024,
-        max_attempts=settings.data["telegram_upload_max_attempts"],
-        second_attempt_delay_seconds=settings.data["telegram_upload_second_attempt_delay_seconds"],
-        third_attempt_delay_seconds=settings.data["telegram_upload_third_attempt_delay_seconds"],
-        daily_limit=settings.data["limits"]["daily_download_limit"],
-        trusted_users=tuple(settings.data["trusted_users"]),
-    ))
-    maintenance = asyncio.create_task(run_queue_maintenance(
-        stop=stop, db_path=Path("data/bot.sqlite"),
-    ))
-    polling = asyncio.create_task(dispatcher.start_polling(bot))
-    worker_exit = asyncio.create_task(worker.wait())
+        store.initialize(config['backup'])
+    except StateUnavailable:
+        # A damaged DB must never be silently replaced by a fresh empty DB.
+        logging.error('SQLite недоступна; обработка остановлена')
+        await telegram.reconnect(stop,lambda:telegram.notify(config['admin_telegram_id'],'Критическая ошибка SQLite. Обработка остановлена; проверьте резервные копии.'))
+        await stop.wait()
+        await telegram.bot.session.close()
+        return
+    telegram.on_recovered=lambda:store.notice('telegram_recovered','Соединение с Telegram восстановлено после длительного сбоя.')
+    store.notice('startup','BotDownload запущен/перезапущен.')
+    broker = Broker(store,WorkerClient(Path(config['worker']['socket'])),config,telegram)
+    tasks = [asyncio.create_task(broker.run(stop)),asyncio.create_task(telegram.polling(broker,stop))]
+    waiter = asyncio.create_task(stop.wait())
     try:
-        done, _ = await asyncio.wait(
-            (polling, worker_exit, upload, maintenance),
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for service, label in ((upload, 'Telegram upload queue'),
-                               (maintenance, 'Queue maintenance')):
-            if service in done:
-                if service.cancelled():
-                    raise RuntimeError(f'{label} неожиданно отменён')
-                failure = service.exception()
-                if failure is not None:
-                    raise RuntimeError(f'{label} завершился с ошибкой') from failure
-                raise RuntimeError(f'{label} неожиданно завершился')
-        if worker_exit in done and polling not in done:
-            failed = reconcile_confirmed_worker_exit(Path("data/bot.sqlite"))
-            logging.error("Worker завершился: %d активных задач помечено failed", failed)
-            raise RuntimeError("Offline worker неожиданно завершился")
-        await polling
+        done,_ = await asyncio.wait([*tasks,waiter],return_when=asyncio.FIRST_COMPLETED)
+        for t in done:
+            if t is not waiter:
+                t.result()
     finally:
-        if not polling.done():
-            polling.cancel()
-            try:
-                await polling
-            except asyncio.CancelledError:
-                pass
-        if not worker_exit.done():
-            worker_exit.cancel()
-            try:
-                await worker_exit
-            except asyncio.CancelledError:
-                pass
         stop.set()
-        if not maintenance.done():
-            await maintenance
-        else:
-            try:
-                maintenance.result()
-            except (Exception, asyncio.CancelledError):
-                logging.exception('Ошибка обслуживания очереди при остановке')
+        tasks[1].cancel()
         try:
-            await asyncio.wait_for(upload, timeout=10)
-        except asyncio.TimeoutError:
-            upload.cancel()
-            try:
-                await upload
-            except asyncio.CancelledError:
-                pass
-        finally:
-            try:
-                await worker.stop()
-            finally:
-                await bot.session.close()
+            await asyncio.wait_for(asyncio.gather(*tasks,return_exceptions=True),timeout=30)
+        except TimeoutError:
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
+        waiter.cancel()
+        await telegram.bot.session.close()
 
-
-def main() -> None:
+def main():
+    os.umask(0o077)
     try:
         settings = load_settings()
-        for executable in ("ffmpeg", "ffprobe"):
-            if shutil.which(executable) is None:
-                raise ConfigurationError(f"{executable}: исполняемый файл не найден")
-        cfg = settings.data["logging"]
-        Path("logs").mkdir(exist_ok=True)
-        logging.basicConfig(
-            level=getattr(logging, cfg["level"]),
-            handlers=[
-                RotatingFileHandler("logs/bot.log", maxBytes=cfg["max_file_size_mb"] * 1024 * 1024, backupCount=cfg["backup_count"], encoding="utf-8"),
-                logging.StreamHandler(),
-            ],
-            format="%(asctime)s %(levelname)s %(message)s",
-        )
-        db_path = Path("data/bot.sqlite")
-        initialize(db_path)
-        recovery = recover_before_workers(
-            db_path, settings.data["storage"]["download_dir"],
-        )
-        logging.info(
-            "Восстановление: повторно в очереди %d, готовых файлов %d, "
-            "недоступных файлов %d, незарегистрированных каталогов %d",
-            recovery.requeued, recovery.ready_files,
-            recovery.missing_or_unsafe_files, len(recovery.orphan_directories),
-        )
-        for orphan in recovery.orphan_directories:
-            logging.warning("Незарегистрированный каталог (не удалён): %s", orphan)
-        cleaned, skipped = cleanup_terminal_files(
-            db_path, settings.data["storage"]["download_dir"],
-        )
-        logging.info("Очистка завершённых задач: удалено %d, пропущено %d", cleaned, skipped)
-        logging.info("Запускается Telegram polling (режим %s)", settings.data["telegram"]["api_mode"])
-        asyncio.run(run_bot(settings))
-    except (ConfigurationError, OSError, RuntimeError) as exc:
-        print(f"Ошибка запуска: {exc}", file=sys.stderr)
+        private_dir('logs')
+        cfg = settings.data['logging']
+        handlers = [RotatingFileHandler('logs/bot.log',maxBytes=cfg['max_file_size_mb']*1024**2,backupCount=cfg['backup_count'],encoding='utf-8'),logging.StreamHandler()]
+        for h in handlers:
+            h.addFilter(Redaction())
+        logging.basicConfig(level=cfg['level'],handlers=handlers,format='%(asctime)s %(levelname)s %(message)s',force=True)
+        private_dir('data')
+        with Path('data/bot.lock').open('a') as lock:
+            try:
+                fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError('Бот уже запущен') from None
+            asyncio.run(run(settings))
+    except (ConfigurationError,OSError,RuntimeError) as exc:
+        print(f'Ошибка запуска: {type(exc).__name__}: {exc}')
         raise SystemExit(1) from None
-    except KeyboardInterrupt:
-        logging.info("Остановка бота")
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

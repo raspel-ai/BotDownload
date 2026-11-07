@@ -1,14 +1,10 @@
-name: Python tests
-
+name: BotDownload v1 regression
 on:
   push:
-    branches:
-      - restore/verified-691-tests
+    branches: [dev/v1-completion]
   pull_request:
-
 permissions:
   contents: read
-
 jobs:
   pytest:
     runs-on: ubuntu-latest
@@ -17,12 +13,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
           cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-      - name: Install dependencies
-        run: python -m pip install -r requirements-dev.txt
-      - name: Run offline test suite (legacy implementation; not v1 acceptance)
-        run: python -m pytest -q
+          cache-dependency-path: requirements.lock
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: python -m pip install -r requirements.lock -r requirements-dev.txt
+      - run: python -m pip check
+      - run: python -m pytest -q

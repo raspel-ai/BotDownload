@@ -1,0 +1,8 @@
+# Установите отдельную копию в /etc/systemd/system/tgbot-worker.service.d/resources.conf
+# Замените значения на соответствующие RAM/CPU/числу процессов вашего VPS.
+# Значения ниже — пример, не требования к VPS. Проверить реальной загрузкой.
+[Service]
+MemoryMax=2G
+TasksMax=64
+CPUQuota=100%
+LimitNOFILE=1024

@@ -51,3 +51,6 @@ backups/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+work/
+files/

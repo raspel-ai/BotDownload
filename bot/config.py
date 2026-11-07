@@ -1,102 +1,82 @@
-"""Strict, centralized configuration loading."""
+"""Single validated configuration; worker never loads .env."""
 from dataclasses import dataclass
 from pathlib import Path
 import os
-
+from urllib.parse import urlsplit
 import yaml
 from dotenv import load_dotenv
-
-
-class ConfigurationError(Exception):
-    """Configuration is invalid."""
-
-
+class ConfigurationError(ValueError):
+    pass
+SCHEMA = {
+ 'telegram': {'api_mode': str, 'api_base_urls': {'cloud': str, 'local': str}, 'max_upload_size_mb': {'cloud': int, 'local': int}, 'reconnect': {'initial_delay_seconds': int, 'max_delay_seconds': int, 'backoff_multiplier': int}},
+ 'limits': {'max_video_duration_seconds': int, 'max_audio_duration_seconds': int, 'daily_download_limit': int, 'max_pending_tasks': int, 'queue_wait_timeout_minutes': int},
+ 'storage': {'unknown_size_fallback_mib': int, 'keep_downloaded_files': bool, 'files_dir': str},
+ 'rate_limit': {'link_attempts': int, 'window_seconds': int, 'ban_duration_seconds': int},
+ 'max_download_attempts': int, 'telegram_upload_max_attempts': int,
+ 'telegram_upload_second_attempt_delay_seconds': int, 'telegram_upload_third_attempt_delay_seconds': int,
+ 'timeouts': {'analysis_timeout_seconds': int, 'download_timeout_seconds': int, 'ffmpeg_timeout_seconds': int},
+ 'backup': {'max_copies': int, 'interval_hours': int},
+ 'logging': {'level': str, 'max_file_size_mb': int, 'backup_count': int},
+ 'admin_telegram_id': int, 'trusted_users': list,
+ 'worker': {'socket': str, 'isolation_confirmation': str, 'max_inspects': int},
+}
 @dataclass(frozen=True)
 class Settings:
     data: dict
-    token: str
+    token: str = ''
 
+def validate(data, schema=SCHEMA, prefix=''):
+    if type(data) is not dict or set(data) != set(schema):
+        raise ConfigurationError(f'{prefix or "config"}: неверный набор параметров')
+    for k, typ in schema.items():
+        p = f'{prefix}.{k}' if prefix else k
+        v = data[k]
+        if isinstance(typ, dict):
+            validate(v, typ, p)
+        elif type(v) is not typ:
+            raise ConfigurationError(f'{p}: неверный тип')
+        elif typ is int and v <= 0:
+            raise ConfigurationError(f'{p}: требуется положительное число')
+    if prefix:
+        return
+    t = data['telegram']
+    if t['api_mode'] not in {'cloud', 'local'}:
+        raise ConfigurationError('telegram.api_mode: только local/cloud')
+    for mode, address in t['api_base_urls'].items():
+        try:
+            u = urlsplit(address)
+            if not u.hostname or u.username or u.password or u.query or u.fragment or u.path not in {'', '/'}:
+                raise ValueError
+            if mode == 'cloud' and address.rstrip('/') != 'https://api.telegram.org':
+                raise ValueError
+            if mode == 'local' and u.scheme not in {'http', 'https'}:
+                raise ValueError
+            _ = u.port
+        except ValueError:
+            raise ConfigurationError(f'telegram.api_base_urls.{mode}: неверный адрес') from None
+    if data['logging']['level'] not in {'DEBUG', 'INFO', 'WARNING', 'ERROR'}:
+        raise ConfigurationError('logging.level: неверный уровень')
+    if any(type(x) is not int or x <= 0 for x in data['trusted_users']):
+        raise ConfigurationError('trusted_users: требуются положительные ID')
+    for k in ('socket', 'isolation_confirmation'):
+        if not Path(data['worker'][k]).is_absolute() or any(ord(c) < 32 for c in data['worker'][k]):
+            raise ConfigurationError(f'worker.{k}: требуется абсолютный путь')
+    p = Path(data['storage']['files_dir'])
+    if p.is_absolute() or '..' in p.parts or p == Path('.') or p.parts[0] in {'data', 'tmp', 'logs', 'backups', 'work'}:
+        raise ConfigurationError('storage.files_dir: требуется отдельный относительный каталог')
+    if t['reconnect']['max_delay_seconds'] < t['reconnect']['initial_delay_seconds']:
+        raise ConfigurationError('telegram.reconnect: неверные задержки')
 
-SCHEMA = {
-    "telegram": {"api_mode": str, "api_base_urls": {"cloud": str, "local": str}, "max_upload_size_mb": {"cloud": int, "local": int}, "reconnect": {"initial_delay_seconds": int, "max_delay_seconds": int, "backoff_multiplier": int}},
-    "limits": {"max_video_duration_seconds": int, "max_audio_duration_seconds": int, "daily_download_limit": int, "max_pending_tasks": int, "queue_wait_timeout_minutes": int},
-    "storage": {"unknown_size_fallback_mib": int, "download_dir": str},
-    "rate_limit": {"link_attempts": int, "window_seconds": int, "ban_duration_seconds": int},
-    "max_download_attempts": int,
-    "telegram_upload_max_attempts": int,
-    "telegram_upload_second_attempt_delay_seconds": int,
-    "telegram_upload_third_attempt_delay_seconds": int,
-    "timeouts": {"analysis_timeout_seconds": int, "download_timeout_seconds": int, "ffmpeg_timeout_seconds": int},
-    "backup": {"max_copies": int, "interval_hours": int},
-    "logging": {"level": str, "max_file_size_mb": int, "backup_count": int},
-    "admin_telegram_id": int,
-    "trusted_users": list,
-}
-
-
-def _validate(data, schema, prefix=""):
-    if not isinstance(data, dict):
-        raise ConfigurationError(f"{prefix or 'config'}: ожидается объект")
-    for key in schema:
-        path = f"{prefix}.{key}" if prefix else key
-        if key not in data:
-            raise ConfigurationError(f"{path}: обязательный параметр отсутствует")
-        value, expected = data[key], schema[key]
-        if isinstance(expected, dict):
-            _validate(value, expected, path)
-        elif type(value) is not expected:
-            raise ConfigurationError(f"{path}: неверный тип")
-    unknown = set(data) - set(schema)
-    if unknown:
-        raise ConfigurationError(f"{prefix or 'config'}: неизвестный параметр {sorted(unknown)[0]}")
-
-
-def load_settings(root: Path = Path(".")) -> Settings:
-    path = root / "config.yaml"
+def load_settings(root=Path('.'), *, secrets=True):
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise ConfigurationError("config.yaml: не удалось прочитать конфигурацию") from exc
-    if isinstance(data, dict) and isinstance(data.get("storage"), dict):
-        data["storage"].setdefault("download_dir", "data/downloads")
-    _validate(data, SCHEMA)
-    download_dir = data["storage"]["download_dir"]
-    if (not download_dir.strip() or "\\x00" in download_dir or "\\n" in download_dir or "\\r" in download_dir):
-        raise ConfigurationError("storage.download_dir: недопустимый путь")
-    if data["telegram"]["api_mode"] not in ("local", "cloud"):
-        raise ConfigurationError("telegram.api_mode: допустимы local или cloud")
-    if data["logging"]["level"] not in ("DEBUG", "INFO", "WARNING", "ERROR"):
-        raise ConfigurationError("logging.level: недопустимый уровень")
-    for key in ("cloud", "local"):
-        from urllib.parse import urlsplit
-        u = urlsplit(data["telegram"]["api_base_urls"][key])
-        if u.scheme != ("https" if key == "cloud" else "http") or not u.hostname or u.username or u.password:
-            raise ConfigurationError(f"telegram.api_base_urls.{key}: неверный адрес")
-    if any(type(x) is not int or x <= 0 for x in data["trusted_users"]):
-        raise ConfigurationError("trusted_users: ожидаются положительные Telegram ID")
-    if data["admin_telegram_id"] <= 0:
-        raise ConfigurationError("admin_telegram_id: ожидается положительный ID")
-    def check_positive(node, schema, prefix=""):
-        for key, expected in schema.items():
-            value = node[key]
-            path = f"{prefix}.{key}" if prefix else key
-            if isinstance(expected, dict):
-                check_positive(value, expected, path)
-            elif expected is int and path not in ("logging.backup_count",):
-                if value <= 0:
-                    raise ConfigurationError(f"{path}: ожидается положительное число")
-    check_positive(data, SCHEMA)
-    if data["logging"]["backup_count"] < 0:
-        raise ConfigurationError("logging.backup_count: не может быть отрицательным")
-    if data["telegram"]["reconnect"]["max_delay_seconds"] < data["telegram"]["reconnect"]["initial_delay_seconds"]:
-        raise ConfigurationError("telegram.reconnect: максимальная задержка меньше начальной")
-    load_dotenv(root / ".env", override=False)
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if not token or token == "PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE":
-        raise ConfigurationError("TELEGRAM_BOT_TOKEN: секрет не задан")
-    admin_id = os.environ.get("ADMIN_TELEGRAM_ID", "").strip()
-    if admin_id:
-        if not admin_id.isdecimal() or int(admin_id) <= 0:
-            raise ConfigurationError("ADMIN_TELEGRAM_ID: ожидается положительный Telegram ID")
-        data["admin_telegram_id"] = int(admin_id)
+        data = yaml.safe_load((root / 'config.yaml').read_text())
+    except (OSError, yaml.YAMLError):
+        raise ConfigurationError('config.yaml: ошибка чтения') from None
+    validate(data)
+    token = ''
+    if secrets:
+        load_dotenv(root / '.env', override=False)
+        token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+        if not token or token.startswith('PASTE_'):
+            raise ConfigurationError('TELEGRAM_BOT_TOKEN: секрет не задан')
     return Settings(data, token)

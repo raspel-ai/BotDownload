@@ -1,8 +1,8 @@
 telegram:
   api_mode: local
   api_base_urls:
-    cloud: "https://api.telegram.org"
-    local: "http://127.0.0.1:8081"
+    cloud: https://api.telegram.org
+    local: http://127.0.0.1:8081
   max_upload_size_mb:
     cloud: 50
     local: 2000
@@ -18,7 +18,8 @@ limits:
   queue_wait_timeout_minutes: 30
 storage:
   unknown_size_fallback_mib: 2048
-  download_dir: "data/downloads"
+  keep_downloaded_files: false
+  files_dir: files
 rate_limit:
   link_attempts: 5
   window_seconds: 600
@@ -40,3 +41,7 @@ logging:
   backup_count: 3
 admin_telegram_id: 123456789
 trusted_users: []
+worker:
+  socket: /run/botdownload/worker.sock
+  isolation_confirmation: /etc/botdownload/worker-isolation.json
+  max_inspects: 2
