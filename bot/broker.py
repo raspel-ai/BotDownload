@@ -164,6 +164,7 @@ class Broker:
             try:
                 result = await self.client.call(job['execution_id'],'cancel')
             except WorkerUnavailable:
+                await self.status(job,'Ожидается подтверждение остановки worker. Отмена ещё не завершена.')
                 return False
             if result['status'] not in {'cancelled','not_found','completed','failed'}:
                 return False
@@ -183,6 +184,7 @@ class Broker:
         try:
             reply = await self.client.call(eid,action,payload)
         except WorkerUnavailable:
+            await self.status(self.store.get(job['id']),'Защищённый worker недоступен. Задание приостановлено до восстановления связи.')
             return
         await self.reconcile(self.store.get(job['id']),reply)
 
@@ -197,6 +199,8 @@ class Broker:
             await self.cancel(job)
             return
         if job['phase']=='inspecting':
+            if reply.get('error',{}).get('permanent') and reply.get('error',{}).get('code') in {'source_unavailable','unsupported_content'}:
+                return await self.fail(job,'Источник недоступен, не поддерживается или требует авторизации.','source_unavailable')
             if reply.get('error',{}).get('code')=='isolation_unconfirmed':
                 self.store.notice('worker_isolation','Защита worker не подтверждена. Inspect/download отключены до проверки оператором.')
                 return await self.fail(job,'Защищённый worker не допущен. Требуется проверка изоляции оператором.','isolation_unconfirmed')
@@ -255,6 +259,7 @@ class Broker:
                     reply = await self.client.call(job['execution_id'],'status')
                 except WorkerUnavailable:
                     unresolved = True
+                    await self.status(job,'Защищённый worker недоступен. Задание приостановлено до восстановления связи.')
                     continue
                 await self.reconcile(job,reply)
         rows = self.store.rows("SELECT * FROM jobs WHERE phase NOT IN ('completed','failed','cancelled') ORDER BY created,id")

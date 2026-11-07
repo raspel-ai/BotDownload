@@ -88,6 +88,10 @@ class MediaTools:
                 output = root / ('ready.mp3' if audio else 'ready.mp4')
                 videos = [s for s in streams if s.get('codec_type') == 'video' and not s.get('disposition', {}).get('attached_pic')]
                 audios = [s for s in streams if s.get('codec_type') == 'audio']
+                if audios:
+                    selected=next((s for s in audios if str(s.get('tags',{}).get('language','')).lower() in {'ru','rus'}),None)
+                    selected=selected or next((s for s in audios if s.get('disposition',{}).get('default')),audios[0])
+                    audios=[selected]
                 if not audios or (not audio and not videos):
                     raise ToolError('missing_stream', True)
                 if not audio and code.endswith('p') and dimensions(videos[0]) != int(code[:-1]):
@@ -95,10 +99,10 @@ class MediaTools:
                 stage('conversion' if audio else 'processing')
                 ff = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-n', '-protocol_whitelist', 'file,pipe', '-i', str(source), '-map_metadata', '-1']
                 if audio:
-                    ff += ['-map', '0:a:0', '-vn', '-c:a', 'libmp3lame', '-q:a', '0']
+                    ff += ['-map', f"0:{audios[0]['index']}", '-vn', '-c:a', 'libmp3lame', '-q:a', '0']
                 else:
                     compatible = videos[0].get('codec_name') == 'h264' and videos[0].get('pix_fmt') == 'yuv420p'
-                    ff += ['-map', '0:v:0', '-map', '0:a:0', '-c:v', 'copy' if compatible else 'libx264']
+                    ff += ['-map', f"0:{videos[0]['index']}", '-map', f"0:{audios[0]['index']}", '-c:v', 'copy' if compatible else 'libx264']
                     if not compatible:
                         ff += ['-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-b:v', '4000k']
                     ff += ['-c:a', 'copy' if audios[0].get('codec_name') == 'aac' and audios[0].get('profile') == 'LC' else 'aac', '-b:a', '192k', '-movflags', '+faststart']
