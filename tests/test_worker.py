@@ -74,3 +74,12 @@ def test_process_tree_cancel(tmp_path):
         proc=Path(f'/proc/{child}/stat')
         if proc.exists():assert proc.read_text().split()[2]=='Z'
     asyncio.run(scenario())
+
+def test_cancel_before_coroutine_first_runs(config):
+    async def scenario():
+        tools=Tools();c=Controller(config,tools)
+        await c.dispatch(req(20))
+        assert (await c.dispatch(req(20,'cancel')))['status']=='cancelled'
+        assert tools.active==0
+        await c.close()
+    asyncio.run(scenario())

@@ -101,7 +101,8 @@ def main():
             print('SQLite PASS')
     elif args.command in {'status','queue'}:
         query = 'SELECT phase,count(*) AS count FROM jobs GROUP BY phase' if args.command=='status' else "SELECT id,phase,queued FROM jobs WHERE phase='queued' ORDER BY queued,id"
-        for r in store.rows(query):
+        for pos,r in enumerate(store.rows(query),1):
+            if args.command=='queue':r['position']=pos
             print(json.dumps(r,ensure_ascii=False))
     elif args.command=='cache':
         print(store.rows('SELECT valid,count(*) AS count FROM result_cache GROUP BY valid'))

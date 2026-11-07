@@ -98,3 +98,39 @@ def test_safe_legacy_data_migration(store,config):
     assert store.rows('SELECT * FROM bans_v1')[0]['until']==9999999999
     assert store.rows('SELECT * FROM tasks')
     assert list(Path('backups').glob('*.sqlite'))
+
+def test_duplicate_invalid_and_valid_updates_are_durable(store,config):
+    b=Broker(store,Client(),config,TG())
+    assert b.accept(123,10,10,'https://evil.com/a')[0]=='invalid'
+    assert b.accept(123,10,10,'https://evil.com/a')[0]=='duplicate'
+    result,jid,_=b.accept(123,10,11,'https://youtu.be/abcdefghijk')
+    assert result=='accepted' and store.get(jid)['phase']=='inspect'
+    assert b.accept(123,10,11,'https://youtu.be/abcdefghijk')[0]=='duplicate'
+    assert store.rows('SELECT count(*) n FROM attempts')[0]['n']==2
+
+
+def test_queue_timeout_and_twenty_pending(store,config):
+    b=Broker(store,Client(),config,TG())
+    ids=[]
+    for n in range(20):
+        i=store.create(123,10,100+n,200+n,validate_url('https://youtu.be/abcdefghijk'))
+        store.update(i,phase='card');assert store.select(i,123,10,200+n,'video',20);ids.append(i)
+    i=store.create(123,10,1000,2000,validate_url('https://youtu.be/abcdefghijk'))
+    store.update(i,phase='card')
+    with pytest.raises(OverflowError):store.select(i,123,10,2000,'video',20)
+    store.update(ids[0],queued=time.time()-1900)
+    b.disk_allows=lambda j:False
+    asyncio.run(b.tick())
+    assert store.get(ids[0])['phase']=='failed'
+    assert store.get(ids[0])['error']=='queue_timeout'
+
+
+def test_corrupt_ready_never_sent_and_can_redownload(store,config):
+    from bot.files import ready_path
+    i=job(store);store.select(i,123,10,2,'video',20);eid=store.execution(i,'download')
+    p=ready_path(eid,False);p.write_bytes(b'not validated')
+    store.update(i,phase='upload_pending',ready_file=str(p),download_attempts=1)
+    tg=TG();b=Broker(store,Client(),config,tg)
+    asyncio.run(b.upload(store.get(i)))
+    assert not tg.sent and store.get(i)['phase']=='queued'
+    assert not p.exists()

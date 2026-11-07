@@ -110,6 +110,7 @@ class Broker:
         return True
 
     async def fail(self, job, message, code='failed'):
+        logging.warning('Задача %s завершена с ошибкой %s; download_attempts=%s upload_attempts=%s',job['id'],code,job['download_attempts'],job['upload_attempts'])
         self.store.update(job['id'],phase='failed',error=code)
         self.remove_files(job)
         await self.status(self.store.get(job['id']), 'Ошибка: '+message)
@@ -196,6 +197,9 @@ class Broker:
             await self.cancel(job)
             return
         if job['phase']=='inspecting':
+            if reply.get('error',{}).get('code')=='isolation_unconfirmed':
+                self.store.notice('worker_isolation','Защита worker не подтверждена. Inspect/download отключены до проверки оператором.')
+                return await self.fail(job,'Защищённый worker не допущен. Требуется проверка изоляции оператором.','isolation_unconfirmed')
             if state=='not_found':
                 # It may be a lost admission, or a worker restart. Safe to resubmit inspect.
                 self.store.update(job['id'],phase='inspect')
@@ -341,7 +345,7 @@ class Broker:
             else:
                 await self.fail(job,'Готовый файл отсутствует или повреждён.','unsafe_ready')
         else:
-            self.store.delivered(job['id'],file_id)
+            self.store.delivered(job['id'],file_id,retain=self.config['storage']['keep_downloaded_files'])
             job = self.store.get(job['id'])
             if self.config['storage']['keep_downloaded_files']:
                 if job['execution_id']:
@@ -351,8 +355,32 @@ class Broker:
             left = 'без ограничений' if job['user_id'] in self.config['trusted_users'] else str(max(0,self.config['limits']['daily_download_limit']-self.store.used(job['user_id'])))
             await self.status(job,f'Готово. Остаток дневного лимита: {left}.')
 
+    async def recover_files(self):
+        # Startup reconciliation is based on ownership/state, never file age.
+        active={str(r['execution_id']) for r in self.store.rows("SELECT execution_id FROM jobs WHERE phase NOT IN ('completed','failed','cancelled')") if r['execution_id']}
+        for p in Path('data/tmp').glob('*'):
+            if p.name in active or not p.name.isdecimal() or p.is_symlink():
+                continue
+            try:
+                reply=await self.client.call(int(p.name),'status')
+            except WorkerUnavailable:
+                return False
+            if reply['status'] in {'not_found','completed','cancelled','failed'}:
+                clean_task(int(p.name))
+        for job in self.store.rows("SELECT * FROM jobs WHERE phase IN ('completed','failed','cancelled') AND retained=0 AND execution_id IS NOT NULL"):
+            try:
+                reply=await self.client.call(job['execution_id'],'status')
+            except WorkerUnavailable:
+                return False
+            if reply['status'] in {'not_found','completed','cancelled','failed'}:
+                self.remove_files(job)
+        return True
+
     async def run(self, stop):
+        reconciled=False
         while not stop.is_set():
+            if not reconciled:
+                reconciled=await self.recover_files()
             await self.tick()
             try:
                 await asyncio.wait_for(stop.wait(),timeout=1)

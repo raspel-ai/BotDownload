@@ -61,6 +61,8 @@ def validate(data, schema=SCHEMA, prefix=''):
     for k in ('socket', 'isolation_confirmation'):
         if not Path(data['worker'][k]).is_absolute() or any(ord(c) < 32 for c in data['worker'][k]):
             raise ConfigurationError(f'worker.{k}: требуется абсолютный путь')
+    if any(Path(data['worker']['socket']).is_relative_to(Path(p)) for p in ('/tmp','/var/tmp')):
+        raise ConfigurationError('worker.socket: /tmp несовместим с PrivateTmp')
     p = Path(data['storage']['files_dir'])
     if p.is_absolute() or '..' in p.parts or p == Path('.') or p.parts[0] in {'data', 'tmp', 'logs', 'backups', 'work'}:
         raise ConfigurationError('storage.files_dir: требуется отдельный относительный каталог')

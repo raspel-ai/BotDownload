@@ -81,7 +81,7 @@ def main():
             except BlockingIOError:
                 raise RuntimeError('Бот уже запущен') from None
             asyncio.run(run(settings))
-    except (ConfigurationError,OSError,RuntimeError) as exc:
+    except (ConfigurationError,OSError,RuntimeError,ValueError) as exc:
         print(f'Ошибка запуска: {type(exc).__name__}: {exc}')
         raise SystemExit(1) from None
 

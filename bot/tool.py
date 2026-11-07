@@ -45,7 +45,8 @@ def main():
     opts=options()
     if action=='download':
         if code not in {'480p','720p','1080p','MP3','video','audio'}:raise SystemExit(2)
-        opts.update(format=formatter(code),outtmpl=str(task_dir(eid)/'source.%(ext)s'),merge_output_format='mkv')
+        opts.update(format=formatter(code),outtmpl=str(task_dir(eid)/'source.%(ext)s'),merge_output_format='mkv',
+            postprocessor_hooks=[lambda event:print('BOTDOWNLOAD_PROCESSING',flush=True) if event.get('status')=='started' else None])
     else:
         opts.update(skip_download=True)
     try:

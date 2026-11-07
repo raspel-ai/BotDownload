@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS jobs(
  upload_attempts INTEGER NOT NULL DEFAULT 0, next_upload REAL NOT NULL DEFAULT 0,
  execution_id INTEGER, ready_file TEXT, file_id TEXT, cache_key TEXT,
  cache_hit INTEGER NOT NULL DEFAULT 0, quota_exempt INTEGER NOT NULL DEFAULT 0,
- cancel_requested INTEGER NOT NULL DEFAULT 0, error TEXT, last_status TEXT,
+ cancel_requested INTEGER NOT NULL DEFAULT 0, retained INTEGER NOT NULL DEFAULT 0, error TEXT, last_status TEXT,
  UNIQUE(chat_id,input_message_id));
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(phase,queued,id);
 CREATE TABLE IF NOT EXISTS executions(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id INTEGER NOT NULL,action TEXT NOT NULL);
@@ -79,6 +79,7 @@ class Store:
 
     def initialize(self, backup_config):
         private_dir(self.path.parent)
+        recovered=False
         if not self.path.exists() and list(self.path.parent.glob('database_corrupt_*.sqlite')):
             raise StateUnavailable('Сохранена повреждённая база; требуется db restore или явный db init.')
         if self.path.exists() and not self.verify(self.path):
@@ -87,20 +88,24 @@ class Store:
             for p in candidates:
                 if self.verify(p) and self.compatible(p):
                     self.restore(p)
-                    self.notice('db_recovery', 'База восстановлена из проверенной копии.')
+                    recovered=True
                     break
             else:
                 raise StateUnavailable('SQLite повреждена; обработка остановлена, нужна проверенная копия или db init.')
-        if self.path.exists():
+        if self.path.exists() and self.path.stat().st_size:
             # Before any schema addition/migration, preserve a checked snapshot.
             self.backup(backup_config['max_copies'])
         with self.db() as db:
             # executescript commits; only used before any task processing starts.
             db.executescript(SCHEMA)
+            if 'retained' not in {r[1] for r in db.execute('PRAGMA table_info(jobs)')}:
+                db.execute('ALTER TABLE jobs ADD COLUMN retained INTEGER NOT NULL DEFAULT 0')
             version = db.execute('SELECT version FROM v1_meta').fetchone()[0]
             if version != 1:
                 raise StateUnavailable('Несовместимая схема SQLite')
             self.migrate_legacy(db)
+        if recovered:
+            self.notice('db_recovery','База восстановлена из проверенной копии.')
         os.chmod(self.path, 0o600)
 
     def migrate_legacy(self, db):
@@ -154,7 +159,8 @@ class Store:
             c = sqlite3.connect(f'file:{path.absolute()}?mode=ro', uri=True)
             try:
                 row = c.execute('SELECT version FROM v1_meta').fetchone()
-                return row is not None and row[0] == 1
+                tables={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                return row is not None and row[0] == 1 and {'jobs','executions','quota','result_cache'}<=tables
             finally:
                 c.close()
         except sqlite3.Error:
@@ -279,12 +285,12 @@ class Store:
         with self.db() as db:
             db.execute('INSERT OR IGNORE INTO notices(code,text) VALUES(?,?)',(code,text))
 
-    def delivered(self, job_id, file_id):
+    def delivered(self, job_id, file_id, retain=False):
         with self.db() as db:
             row = db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
             if row['phase'] == 'completed':
                 return False
-            db.execute("UPDATE jobs SET phase='completed',file_id=? WHERE id=?",(file_id,job_id))
+            db.execute("UPDATE jobs SET phase='completed',file_id=?,retained=? WHERE id=?",(file_id,bool(retain),job_id))
             if not row['quota_exempt'] and not row['cache_hit']:
                 db.execute('INSERT OR IGNORE INTO quota VALUES(?,?,?)',(job_id,row['user_id'],day()))
             db.execute('INSERT OR REPLACE INTO result_cache VALUES(?,?,1,?)',(row['cache_key'],file_id,row['metadata']))

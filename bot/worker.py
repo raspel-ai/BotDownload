@@ -78,7 +78,7 @@ class Controller:
             return self.answer(req, 'not_found')
         if action == 'cancel' and job.status in {'accepted', 'running'}:
             job.task.cancel()
-            await job.task  # process-group teardown finishes before acknowledgement
+            await asyncio.gather(job.task,return_exceptions=True)  # teardown before acknowledgement
             job.status = 'cancelled'
         return self.snapshot(req, job)
 
@@ -161,6 +161,8 @@ def main():
     if not (Path(sys.executable).parent/'deno').is_file():
         raise SystemExit('deno: обязательная зависимость отсутствует')
     private_dir('data')
+    if private_dir(config['storage']['files_dir']).stat().st_dev != private_dir('data/tmp').stat().st_dev:
+        raise SystemExit('files и data/tmp должны находиться на одной файловой системе')
     with Path('data/worker.lock').open('a') as lock:
         try:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
