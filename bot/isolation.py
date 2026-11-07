@@ -5,16 +5,21 @@ import os
 from pathlib import Path
 import stat
 
-def unit_digest():
-    files = []
-    for base in ('/etc/systemd/system', '/run/systemd/system'):
-        root = Path(base)
-        files += [root / 'tgbot-worker.service', *sorted((root / 'tgbot-worker.service.d').glob('*.conf'))]
+def unit_digest(roots=None):
+    # Include persistent/runtime control overrides and inherited service drop-ins.
+    roots = roots or ('/etc/systemd/system', '/run/systemd/system',
+                      '/etc/systemd/system.control', '/run/systemd/system.control',
+                      '/usr/local/lib/systemd/system', '/usr/lib/systemd/system')
     digest = hashlib.sha256()
-    for p in files:
-        if p.exists():
-            digest.update(str(p).encode())
-            digest.update(p.read_bytes())
+    for base in roots:
+        root = Path(base)
+        files = [root / 'tgbot-worker.service']
+        for directory in ('service.d', 'tgbot-.service.d', 'tgbot-worker.service.d'):
+            files.extend(sorted((root / directory).glob('*.conf')))
+        for p in files:
+            if p.exists():
+                digest.update(str(p).encode())
+                digest.update(p.read_bytes())
     return digest.hexdigest()
 
 class IsolationError(RuntimeError):

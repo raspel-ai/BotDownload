@@ -8,6 +8,7 @@ Type=simple
 User=tgbot
 Group=tgbot
 WorkingDirectory=/opt/botdownload
+ExecStartPre=/opt/botdownload/.venv/bin/python -m bot.probe --if-requested
 ExecStart=/opt/botdownload/.venv/bin/python -m bot.worker
 Restart=on-failure
 RestartSec=5

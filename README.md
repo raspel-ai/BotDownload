@@ -60,6 +60,20 @@ FFmpeg/ffprobe — системный пакет Debian; локально 7.1.5.
 не скачиваются. Плагины yt-dlp, пользовательские конфиги и автообновления отключены.
 Обновляет зависимости только администратор через проверяемое изменение lock-файла.
 
+## Порядок самостоятельной приёмки
+
+Первый внешний этап — **Debian 13 + cloud**, официальный `https://api.telegram.org`.
+Local Bot API Server пока не устанавливается. После облачного этапа отдельно
+проверяются local и Debian 12/Fake-IP; их статус пока INCONCLUSIVE.
+Нормативное значение по умолчанию в образце остаётся `local`; для первого испытания
+оператор явно меняет **локальный** `telegram.api_mode` на `cloud`.
+
+Приёмка идёт через SSH небольшими шагами: команда → обезличенный результат →
+разбор → следующий шаг. Не выполняйте весь справочник одним скриптом. SSH-доступ
+и токен разработчику не требуются; `.env` остаётся только на сервере.
+Первый шаг и журнал этапов: [CLOUD_ACCEPTANCE.md](docs/CLOUD_ACCEPTANCE.md).
+Ни установка, ни диагностический helper сами по себе не означают PASS внешней приёмки.
+
 ## Новая установка на Debian 13
 
 Команды ниже выполняются на VPS после проверки PR. Не вводите настоящий токен
@@ -72,11 +86,13 @@ FFmpeg/ffprobe — системный пакет Debian; локально 7.1.5.
 
    ```bash
    sudo apt update
-   sudo apt install python3 python3-venv ffmpeg git
+   sudo apt install python3 python3-venv ffmpeg git curl ca-certificates nano
    ```
 
 2. Там же создайте отдельного непривилегированного пользователя без входа и каталог.
-   Если пользователь/каталог уже существует, сначала выясните назначение; не удаляйте его.
+   Это команды только для новой установки. Если пользователь, каталог, Git-копия
+   или юниты уже существуют, остановитесь для инвентаризации: не выполняйте повторные
+   clone/useradd, не меняйте владельцев рекурсивно и не перезаписывайте файлы.
 
    ```bash
    sudo useradd --system --no-create-home --home-dir /opt/botdownload --shell /usr/sbin/nologin tgbot
@@ -103,20 +119,27 @@ FFmpeg/ffprobe — системный пакет Debian; локально 7.1.5.
 
 5. Скопируйте пример секрета и заполните файл **локальным редактором на VPS**.
    Не публикуйте содержимое. `.env` должен читаться только `tgbot`.
+   Если любой из двух `test` ниже завершается с ошибкой — остановитесь: существующий
+   `.env` сохраняется, повторное копирование запрещено.
 
    ```bash
-   sudo -u tgbot cp .env.example .env
-   sudo -u tgbot chmod 600 .env
+   sudo -u tgbot test ! -e .env
+   sudo -u tgbot test ! -L .env
+   sudo -u tgbot install -m 600 .env.example .env
    sudo -u tgbot nano .env
    ```
 
 6. Локально отредактируйте `config.yaml`: `admin_telegram_id`, `trusted_users`, режим
-   API и его адрес, лимиты, хранение. Не публикуйте реальные ID. `files_dir` — отдельный
+   API и его адрес, лимиты, хранение. Для текущей приёмки задайте `api_mode: cloud`,
+   `api_base_urls.cloud: "https://api.telegram.org"`, `max_upload_size_mb.cloud: 50`.
+   Поле local остаётся в схеме, но ни Local Server, ни подключение к нему пока не нужны. Не публикуйте реальные ID. `files_dir` — отдельный
    относительный приватный каталог, по умолчанию `files`. `worker.socket` одинаков
    у обоих сервисов, по умолчанию `/run/botdownload/worker.sock`; не `/tmp`.
 
    ```bash
+   sudo -u tgbot chmod 600 config.yaml
    sudo -u tgbot nano config.yaml
+   sudo -u tgbot .venv/bin/python scripts/check_installation_permissions.py
    sudo -u tgbot .venv/bin/python -m bot.admin doctor
    ```
 
@@ -124,12 +147,14 @@ FFmpeg/ffprobe — системный пакет Debian; локально 7.1.5.
    изоляцию. Ошибки конфигурации называют параметр и причину, не секретное значение.
 
 7. Установите два постоянных юнита от администратора. Затем обязательно задайте
-   ограничения памяти, CPU и процессов соразмерно вашему VPS; пример не является
+   ограничения памяти, CPU и процессов соразмерно вашему VPS. Команды копирования
+   ниже допустимы только при отсутствии прежних unit/drop-in: если они уже есть,
+   сначала сохраните их и разберите отличия; слепая замена запрещена. Пример не является
    требованием иметь определённый объём RAM или диска.
 
    ```bash
-   sudo install -m 644 deploy/tgbot.service /etc/systemd/system/tgbot.service
-   sudo install -m 644 deploy/tgbot-worker.service /etc/systemd/system/tgbot-worker.service
+   sudo install -o root -g root -m 644 deploy/tgbot.service /etc/systemd/system/tgbot.service
+   sudo install -o root -g root -m 644 deploy/tgbot-worker.service /etc/systemd/system/tgbot-worker.service
    sudo mkdir -p /etc/systemd/system/tgbot-worker.service.d
    sudo cp deploy/resources.conf.example /etc/systemd/system/tgbot-worker.service.d/resources.conf
    sudo nano /etc/systemd/system/tgbot-worker.service.d/resources.conf
@@ -156,93 +181,101 @@ FFmpeg/ffprobe — системный пакет Debian; локально 7.1.5.
 
 ## Приёмка защиты на каждом VPS
 
-Worker допускает реальные задания только внутри `/tgbot-worker.service` и при наличии
-root-owned подтверждения `/etc/botdownload/worker-isolation.json`. Подтверждение
-привязано к boot ID и содержимому unit/drop-in. Оно не заменяет фактических тестов;
-после перезагрузки VPS или изменения юнита проверку и подтверждение повторяют.
+Используется один и тот же постоянный `tgbot-worker.service` во время испытания и
+эксплуатации. В нём уже есть `ExecStartPre=... bot.probe --if-requested`.
+**Не добавляйте временный ExecStartPre через edit и не меняйте unit после пробы.**
+Без root-owned запроса `/run/botdownload-probe.request` эта проверка не обращается
+в сеть и не выдаёт допуск. Реальные inspect/download по-прежнему требуют отдельного
+root-owned подтверждения `/etc/botdownload/worker-isolation.json`.
 
-Политика v1 запрещает **только** `127.0.0.0/8` и `::1/128` для worker/его детей.
-Остальные private/link-local/metadata/Fake-IP адреса не блокируются. Не меняйте DNS,
-маршруты, IP платформ, не используйте `PrivateNetwork=yes`. Бот сохраняет loopback
-для local Bot API; это другой cgroup. Один UID не изолирует секреты бота от
-скомпрометированного worker; полная защита SSRF не заявляется.
+Согласованная политика не меняется: только `127.0.0.0/8` и `::1/128` запрещены для
+worker/детей. Остальные private/link-local/metadata/Fake-IP адреса не блокируются;
+DNS и маршруты не меняются. `PrivateNetwork=yes` и обходы через transient units
+не используются. Бот остаётся в отдельном cgroup с доступным loopback.
 
-1. В отдельном SSH-терминале оператора на VPS запустите заведомо работающий локальный
-   HTTP-сервис на IPv4 loopback. Он нужен только для теста, не является компонентом
-   приложения. Из каталога без пользовательских файлов:
+Процедура ниже — справочник для пошаговой приёмки. Каждый переход выполняется
+после разбора результата предыдущего шага, без автоматического ответа yes.
 
-   ```bash
-   python3 -m http.server 18765 --bind 127.0.0.1 --directory /var/empty
-   ```
+1. Остановите оба сервиса. Проверьте содержимое установленного юнита и выбранные
+   ограничения ресурсов. Существующие данные, конфигурация и прежние подтверждения
+   не удаляются. Если есть старое подтверждение, сначала отдельно согласуйте его
+   архивирование/отзыв: helper не перезаписывает его автоматически.
 
-   Если `/var/empty` отсутствует, создайте отдельный пустой тестовый каталог или укажите
-   существующий пустой каталог. Не используйте каталог проекта/секретов.
-   Из второго терминала подтвердите HTTP 200 без фильтра и сохраните вывод:
-
-   ```bash
-   curl --noproxy '*' -I http://127.0.0.1:18765/
-   ```
-
-2. Аналогично подтвердите слушающий TCP-сервис на `::1:18765`, если IPv6 включён.
-   Невозможность создать IPv6 baseline фиксируется как INCONCLUSIVE, не как PASS.
-   Для второго тестового сервера используйте отдельный терминал:
+2. Администратор устанавливает **проверенные копии** helper и его stdlib-модуля в
+   каталог root. Сначала сверяются коммит и SHA-256 исходников с проверенной версией;
+   после копирования SHA-256 сверяются повторно (эталоны для этой редакции —
+   в CLOUD_ACCEPTANCE.md). Исходники нельзя менять между
+   сверкой и установкой. Для существующих копий сначала сохранить предыдущую версию.
 
    ```bash
-   python3 -m http.server 18765 --bind ::1 --directory /var/empty
-   curl --noproxy '*' -g -I 'http://[::1]:18765/'
+   sudo install -d -o root -g root -m 755 /usr/local/libexec/botdownload
+   sudo install -o root -g root -m 644 scripts/confirm_worker_isolation.py /usr/local/libexec/botdownload/confirm_worker_isolation.py
+   sudo install -o root -g root -m 644 bot/isolation.py /usr/local/libexec/botdownload/isolation.py
+   sudo sha256sum /usr/local/libexec/botdownload/confirm_worker_isolation.py /usr/local/libexec/botdownload/isolation.py
    ```
 
-3. Остановите оба юнита; временно добавьте диагностический ExecStartPre **в постоянный
-   worker-юнит**, не в transient unit. Основной worker ещё не допущен к заданиям.
+   Root **не запускает** `.venv/bin/python` и скрипты из доступной `tgbot` на запись
+   копии. Helper использует системный Python в isolated mode и загружает только
+   проверенную root-owned копию `isolation.py`; проверяет владельцев и права родителей.
+
+3. Подготовьте запрос с уникальным не секретным идентификатором. Это создаёт только
+   новый файл диагностики, **не включает загрузку**. При существующем запросе helper
+   откажет; его не удаляют вслепую, а сначала разбирают и архивируют результаты.
 
    ```bash
-   sudo systemctl stop tgbot.service tgbot-worker.service
-   sudo systemctl edit tgbot-worker.service
+   sudo /usr/bin/python3 -I /usr/local/libexec/botdownload/confirm_worker_isolation.py --prepare
    ```
 
-   В редакторе добавьте:
+4. По инструкции следующего шага создайте **новый приватный пустой тестовый каталог**,
+   принадлежащий `tgbot`, и только файл `botdownload-probe.txt` с идентификатором из
+   запроса. В двух отдельных SSH-терминалах запустите стандартный Python HTTP Server
+   под `tgbot`: IPv4 `127.0.0.1:18765` и IPv6 `[::1]:18765`, с `--directory` именно
+   этого тестового каталога. Не раздавайте проект, `.env`, базу или пользовательские
+   файлы. Не используйте отсутствующий `/var/empty` как якобы успешный baseline.
 
-   ```ini
-   [Service]
-   ExecStartPre=/opt/botdownload/.venv/bin/python -m bot.probe
-   ```
+   Подтвердите HTTP 200 и правильный идентификатор обоих серверов **вне worker**,
+   под UID `tgbot`. Оставьте оба сервера работающими непрерывно до подтверждения.
+   Если IPv6, порт или baseline недоступны, результат INCONCLUSIVE; допуск не выдаётся.
 
-   Сохраните; затем запустите только worker и смотрите журнал:
+5. После работающего baseline перезапустите только постоянный worker и проверьте
+   его журнал. Проба выполняется в том же cgroup и формирует приватный отчёт
+   `/run/botdownload/isolation-probe.json`. Она проверяет прямые соединения IPv4/IPv6
+   родителя и дочернего процесса, затем системный DNS и HTTPS с проверкой сертификата.
+   Для HTTP(S) пробы proxy не используется, DNS и маршруты не подменяются.
+
+   `ECONNREFUSED`, отсутствие IPv6/маршрута и отсутствующий listener дают
+   **INCONCLUSIVE**, а не PASS фильтра. Доступный loopback даёт FAIL. Наблюдённые
+   блокировки и работающие DNS/HTTPS дают `OBSERVED`, ещё не итоговую приёмку.
+   При ошибке остановите worker, сохраните вывод и разберите причину;
+   не снимайте IPAddressDeny. Не редактируйте unit после успешной пробы.
+
+6. Администратор запускает установленный helper без `--prepare`:
 
    ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl start tgbot-worker.service
-   sudo journalctl -u tgbot-worker.service -n 80 --no-pager
+   sudo /usr/bin/python3 -I /usr/local/libexec/botdownload/confirm_worker_isolation.py
    ```
 
-   `bot.probe` проверяет принадлежность постоянному cgroup, отказ loopback IPv4/IPv6,
-   отказ для дочернего процесса, DNS и HTTPS YouTube. Отказ соединения считается
-   доказательством фильтра **только вместе с работающим baseline из шага 1/2**.
-   Сохраните данные DNS/Fake-IP, журнал и effective-настройки:
+   Он требует свежий полный отчёт текущего boot, unit/drop-in и InvocationID,
+   проверяет effective-настройки (включая отсутствие IPAddressAllow), повторно
+   получает оба baseline под UID `tgbot` вне worker и только после этого спрашивает
+   `VERIFIED-PERMANENT-WORKER`. Enter отменяет. После ответа настройки и baseline
+   проверяются повторно. Только тогда создаётся новый root-owned файл допуска.
+   Существующий файл не перезаписывается.
 
-   ```bash
-   sudo systemctl show tgbot-worker.service -p User -p IPAddressDeny -p NoNewPrivileges -p ProtectSystem -p ProtectHome -p PrivateTmp -p KillMode -p ControlGroup
-   ```
+7. Сохраните запрос, отчёт, effective-настройки и обезличенный журнал как доказательства.
+   **Архивируйте созданный запрос из `/run/botdownload-probe.request`**, чтобы следующие
+   обычные рестарты не требовали HTTP-фикстур; пользовательские данные не затрагиваются.
+   Не изменяйте unit/drop-in после испытаний. Два временных HTTP-сервера остановите
+   Ctrl+C. Подтверждение действует только в текущем boot для проверенного unit;
+   после перезагрузки/изменений проводится новая проба с сохранением старых доказательств.
 
-4. При PASS всех обязательных проверок оператор может убрать диагностический
-   ExecStartPre из drop-in (не удаляя ресурсы и сетевые ограничения), выполнить
-   daemon-reload и рестарт worker. Проверьте, что тот же постоянный юнит и IPAddressDeny
-   сохранены. Только после этого запишите подтверждение:
+8. После подтверждённой защиты запускается `tgbot.service` в **cloud** и проверяется
+   реальный цикл. Local Bot API и Debian 12/Fake-IP идут отдельными следующими этапами.
+   Без фактических результатов внешние проверки остаются INCONCLUSIVE.
 
-   ```bash
-   sudo .venv/bin/python scripts/confirm_worker_isolation.py
-   ```
-
-   Скрипт показывает effective-настройки, **не выполняет тесты вместо оператора** и
-   требует строку `VERIFIED-PERMANENT-WORKER`. Enter отменяет операцию. Не выдавайте
-   этому скрипту автоматическое подтверждение. При изменении unit/drop-in повторите
-   фактические тесты; при несовместимом DNS остановитесь, не отключайте фильтр.
-   Завершите два тестовых HTTP-сервера через Ctrl+C.
-
-5. На VPS с действующей защитой проверьте реальный цикл для каждой платформы:
-   ссылка → карточка → доступное качество → MP4 / MP3 → Telegram; отмену и рестарты
-   на разных этапах; cloud и local отдельно. Отдельно обязательна проверка Debian 12
-   с Fake-IP. Результаты запишите в протокол, не заменяйте их локальными mock-тестами.
+Остаточные риски не изменились: один UID не изолирует секреты от скомпрометированного
+worker; полная защита SSRF в v1 не заявляется. Root-подтверждение — решение оператора
+на основании испытаний, а не доказательство безопасности само по себе.
 
 ## Диагностика и файлы
 
