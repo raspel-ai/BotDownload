@@ -119,13 +119,15 @@ class Broker:
             keyboard.append((label,code))
         prefix = 'Анализ недоступен. Можно попробовать загрузку без предварительных сведений.\n' if clean['analysis'] == 'unknown' else ''
         if clean['analysis'] == 'known' and not variants:
+            if notice:
+                return await self.fail(job,notice+' Других доступных форматов нет.','file_too_large')
             return await self.fail(job,f'Нет доступных форматов для скачивания. Все доступные форматы превышают лимит отправки Telegram — {limit/1024**2:g} МиБ.' if all_variants or clean['video_oversize'] else 'Нет доступных форматов для скачивания.', 'no_formats')
         if clean['video_oversize'] and variants and all(v['code']=='MP3' for v in variants):
             prefix += 'Видеоформаты превышают лимит отправки Telegram. Доступно скачивание аудио.\n'
         if any(v.get('size_kind') != 'known' for v in variants) and clean['analysis'] == 'known':
             prefix += 'Размер предварительный или неизвестен; отправка зависит от размера готового файла.\n'
         if notice:
-            prefix += notice + '\n'
+            prefix += notice + ' Выберите другой доступный формат.\n'
         duration_text = f"{int(duration)//60}:{int(duration)%60:02}" if duration else 'неизвестна'
         text = (prefix + f"{clean['title'] or 'Видео'}\n{clean['uploader']}\nПродолжительность: {duration_text}\n"
             + f"Язык аудио: {clean['language'] or 'не определён'}\nВыберите результат:")
@@ -145,14 +147,13 @@ class Broker:
             await self.fail(job,'Выбранное качество больше недоступно. Повторите анализ ссылки.',reason)
             return True
         meta = json.loads(job['metadata'])
-        meta['variants'] = [v for v in meta.get('variants',[]) if v['code'] != job['format'] and not too_large(v,limit)]
+        # Only the failed choice is removed here. card() applies the same size
+        # evidence (including verified cache results) as on the initial display.
+        meta['variants'] = [v for v in meta.get('variants',[]) if v['code'] != job['format']]
         notice = f'Не удалось отправить файл: итоговый размер превышает лимит Telegram — {limit/1024**2:g} МиБ.'
-        if not meta['variants']:
-            await self.fail(job,notice+' Других доступных форматов нет.',reason)
-        else:
-            meta.update(analysis='known')
-            self.store.update(job['id'],ready_file=None)
-            await self.card(job,meta,notice=notice+' Выберите другой доступный формат.')
+        meta.update(analysis='known')
+        self.store.update(job['id'],ready_file=None)
+        await self.card(job,meta,notice=notice)
         return True
 
     async def fail(self, job, message, code='failed'):
