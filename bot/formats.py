@@ -28,8 +28,10 @@ def audio(formats):
     if ru:
         first = ru[0]
         # Audio IDs identify tracks; format_note often describes video quality.
-        track = (first.get('language'), first.get('audio_track_id'))
-        pool = [f for f in ru if (f.get('language'), f.get('audio_track_id')) == track]
+        # ru already includes regional/ISO aliases of Russian; comparing their
+        # raw language tags would discard an equivalent audio-only encoding.
+        track = first.get('audio_track_id')
+        pool = [f for f in ru if f.get('audio_track_id') == track]
     else:
         original = [f for f in pool if 'original' in str(f.get('format_note') or '').lower() or f.get('language_preference') == 10]
         pool = original or pool

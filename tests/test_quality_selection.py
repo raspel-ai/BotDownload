@@ -50,9 +50,15 @@ def test_assignment(heights,expected):
 
 
 def test_audio_prefers_real_audio_not_combined_tbr_and_preserves_language():
-    a={'format_id':'a','vcodec':'none','acodec':'opus','abr':128,'language':'ru'}
+    a={'format_id':'a','vcodec':'none','acodec':'opus','abr':128,'language':'ru-RU'}
     huge=combined(1080,tbr=99999,language='ru')
     assert audio([huge,a])==a
+    other=a|{'format_id':'other','audio_track_id':'other','abr':999}
+    assert audio([huge,other,a])==a  # retain the first Russian track
+    data={'formats':[huge,a]}
+    plan=next(v['plan'] for v in candidates(data) if v['code']=='1080p')
+    assert plan['audio']['id']=='a'
+    assert [f['format_id'] for f in selection(data,'1080p',plan)]==['1080','a']
     assert audio([combined(480),huge])==huge  # Russian before unknown language
     assert audio([combined(480,language='en'),a])==a
     original={'format_id':'original','vcodec':'none','acodec':'aac','abr':64,'format_note':'original'}
@@ -170,7 +176,10 @@ def test_card_uses_live_config_and_unknown_audio(store,config,mode,limit):
 
 @pytest.mark.parametrize('only_mp3',[False,True])
 def test_all_oversize_and_mp3_only_without_fallback(store,config,only_mp3):
-    data=metadata(info([480,720,1080]))
+    source=info([480,720,1080])
+    source['formats'].insert(0,combined(240,acodec='none')|{'width':None,'height':None})
+    data=metadata(source)
+    assert data['analysis']=='known'
     for v in data['variants']:
         v.update(size=10**12,size_kind='known')
     if only_mp3:
@@ -185,6 +194,17 @@ def test_all_oversize_and_mp3_only_without_fallback(store,config,only_mp3):
         assert 'Нет доступных форматов' in text
     assert not store.select(jid,123,10,2,'video',20)
     assert not store.select(jid,123,10,2,'audio',20)
+
+
+@pytest.mark.parametrize('unknown_first',[True,False])
+def test_known_resolutions_survive_dimensionless_stream(store,config,unknown_first):
+    source=info([480,720])
+    unknown=combined(240,acodec='none')|{'width':None,'height':None}
+    source['formats'].insert(0 if unknown_first else len(source['formats']),unknown)
+    data=metadata(source)
+    assert data['analysis']=='known'
+    jid,b,tg=card(store,config,data)
+    assert [code for _,code in tg.statuses[-1][1]]==['480p','720p','MP3']
 
 
 def test_success_without_formats_distinct_from_inspect_failure(store,config):
