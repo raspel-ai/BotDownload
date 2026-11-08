@@ -3,10 +3,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import time
 from .files import private_dir
+from .formats import offered, validate_plan, too_large
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
@@ -35,8 +37,27 @@ CREATE TABLE IF NOT EXISTS notices(id INTEGER PRIMARY KEY,code TEXT NOT NULL UNI
 '''
 TERMINAL = {'completed', 'failed', 'cancelled'}
 
-def cache_key(platform,resource_id,code,language):
-    return json.dumps([platform,resource_id,'mp3' if code in {'MP3','audio'} else 'video',code,language,'mp3-vbr0' if code in {'MP3','audio'} else 'h264-aac'],separators=(',',':'))
+def cache_key(platform, resource_id, code, plan):
+    return json.dumps([platform, resource_id, code, plan], sort_keys=True, separators=(',', ':'))
+
+
+def cached_result(meta, code, plan, limit):
+    r = meta.get('result')
+    if type(r) is not dict or r.get('validated') is not True or type(r.get('size')) is not int or r['size'] <= 0:
+        return None
+    if r['size'] > limit or r.get('selection') != plan or r.get('format') != ('mp3' if code in {'MP3', 'audio'} else 'mp4'):
+        return None
+    if type(r.get('duration')) not in (int, float) or not 0 < r['duration'] < float('inf'):
+        return None
+    if code in {'MP3','audio'} and r.get('resolution') is not None:
+        return None
+    if code not in {'MP3','audio'} and (type(r.get('resolution')) is not int or r['resolution'] <= 0):
+        return None
+    if code.endswith('p') and r.get('resolution') != int(code[:-1]):
+        return None
+    if type(r.get('sha256')) is not str or re.fullmatch(r'[0-9a-f]{64}',r['sha256']) is None:
+        return None
+    return r
 
 class StateUnavailable(RuntimeError):
     pass
@@ -295,17 +316,31 @@ class Store:
             db.execute('INSERT OR REPLACE INTO result_cache VALUES(?,?,1,?)',(row['cache_key'],file_id,row['metadata']))
             return True
 
-    def select(self, job_id, user, chat, message, code, max_pending):
+    def select(self, job_id, user, chat, message, code, max_pending, upload_limit=None):
         with self.db() as db:
             r = db.execute('SELECT * FROM jobs WHERE id=? AND user_id=? AND chat_id=? AND message_id=?',(job_id,user,chat,message)).fetchone()
             if not r or r['phase'] != 'card' or r['cancel_requested']:
                 return False
             meta = json.loads(r['metadata'])
-            allowed = [x['code'] for x in meta.get('variants', [])] or ['video','audio']
+            allowed = [x['code'] for x in offered(meta)]
             if code not in allowed:
                 return False
-            key = cache_key(r['platform'],r['resource_id'],code,meta.get('language',''))
-            cache = db.execute('SELECT file_id FROM result_cache WHERE key=? AND valid=1',(key,)).fetchone()
+            variant = next(x for x in offered(meta) if x['code'] == code)
+            if upload_limit is not None and too_large(variant,upload_limit):
+                return False
+            plan = variant.get('plan')
+            if code not in {'video','audio'}:
+                validate_plan(plan,code)
+            key = cache_key(r['platform'],r['resource_id'],code,plan)
+            cache = db.execute('SELECT file_id,metadata FROM result_cache WHERE key=? AND valid=1',(key,)).fetchone()
+            result = cached_result(json.loads(cache['metadata']),code,plan,float('inf')) if cache and upload_limit is not None else None
+            if result and result['size'] > upload_limit:
+                return False
+            if not result:
+                cache = None
+            else:
+                meta['result'] = result
+                db.execute('UPDATE jobs SET metadata=? WHERE id=?',(json.dumps(meta),job_id))
             if not cache and db.execute("SELECT count(*) FROM jobs WHERE phase='queued'").fetchone()[0] >= max_pending:
                 raise OverflowError('Очередь заполнена. Попробуйте позже.')
             db.execute('UPDATE jobs SET download_attempts=0,upload_attempts=0,next_upload=0,ready_file=NULL,error=NULL,format=?,cache_key=?,phase=?,queued=?,cache_hit=?,quota_exempt=?,file_id=? WHERE id=?',

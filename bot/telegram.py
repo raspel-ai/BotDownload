@@ -169,7 +169,7 @@ class Telegram:
                 await q.answer('Карточка недоступна.',show_alert=True)
                 return
             try:
-                ok = store.select(rows[0]['id'],q.from_user.id,q.message.chat.id,q.message.message_id,q.data,cfg['limits']['max_pending_tasks'])
+                ok = store.select(rows[0]['id'],q.from_user.id,q.message.chat.id,q.message.message_id,q.data,cfg['limits']['max_pending_tasks'],cfg['telegram']['max_upload_size_mb'][cfg['telegram']['api_mode']]*1024**2)
             except OverflowError as exc:
                 await q.answer(str(exc),show_alert=True)
                 return

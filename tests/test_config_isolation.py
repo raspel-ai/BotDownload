@@ -27,4 +27,4 @@ def test_tool_service_options():
     assert o['allowed_extractors']==['youtube','tiktok','instagram']
     f={'format_id':'audio','vcodec':'none','acodec':'aac','language':'ru','abr':100}
     ctx={'formats':[f,{'format_id':'en','vcodec':'none','acodec':'aac','language':'en','abr':200}]}
-    assert list(formatter('MP3')(ctx))[0]['format_id']=='audio'
+    assert list(formatter('audio')(ctx))[0]['format_id']=='audio'

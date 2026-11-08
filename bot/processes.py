@@ -43,6 +43,8 @@ async def run(args, *, timeout, cwd=None, output_limit=1024*1024, progress=None,
             await p.wait()
         if p.returncode:
             text = err.decode(errors='replace').lower()
+            if 'quality_unavailable' in text:
+                raise ToolError('quality_unavailable', True)
             permanent = any(x in text for x in ('not available', 'private video', 'sign in', 'login required', 'unsupported url', 'no space left', 'source_unavailable', 'disk_full', 'requested format is not available', 'video unavailable', 'copyright'))
             code = 'disk_full' if 'no space left' in text or 'disk_full' in text else 'source_unavailable' if permanent else 'tool_error'
             raise ToolError(code, permanent)

@@ -5,7 +5,7 @@ import sys
 import yt_dlp
 from .config import load_settings
 from .files import task_dir
-from .formats import selection
+from .formats import selection, validate_plan, valid_code
 from .isolation import require_isolation
 from .urls import validate_url
 
@@ -21,31 +21,35 @@ def options():
         'js_runtimes':{'deno':{'path':str(Path(sys.executable).parent/'deno')}},
         'remote_components':set(), 'ffmpeg_location':'/usr/bin', 'overwrites':False}
 
-def formatter(code):
+def formatter(code, plan=None):
     def choose(ctx):
-        selected=selection(ctx,code)
+        selected=selection(ctx,code,plan)
         if not selected:return
         if len(selected)==1:
             yield selected[0]
         else:
             yield {'format_id':'+'.join(f['format_id'] for f in selected),'ext':'mkv',
-                'requested_formats':selected,'protocol':'+'.join(f['protocol'] for f in selected)}
+                'requested_formats':[selected[0] | {'acodec':'none'}, selected[1] | {'vcodec':'none'}],'protocol':'+'.join(f['protocol'] for f in selected)}
     return choose
 
 def main():
     # Python API never loads CLI config; explicitly disable dynamic plugin loading.
     from yt_dlp.globals import plugin_dirs
     plugin_dirs.value=[]
-    if len(sys.argv)!=5 or sys.argv[1] not in {'inspect','download'}:
+    if len(sys.argv) not in {5,6} or sys.argv[1] not in {'inspect','download'}:
         raise SystemExit(2)
-    action,eid,code,url=sys.argv[1],int(sys.argv[2]),sys.argv[3],sys.argv[4]
+    action,eid,code,url=sys.argv[1],int(sys.argv[2]),sys.argv[3],sys.argv[-1]
+    plan = json.loads(sys.argv[4]) if len(sys.argv) == 6 else None
+    if not valid_code(code) or (action == 'download' and code not in {'video','audio'} and plan is None):
+        raise SystemExit(2)
+    if plan is not None:
+        validate_plan(plan,code)
     config=load_settings(secrets=False).data
     require_isolation(config)
     url=validate_url(url).url
     opts=options()
     if action=='download':
-        if code not in {'480p','720p','1080p','MP3','video','audio'}:raise SystemExit(2)
-        opts.update(format=formatter(code),outtmpl=str(task_dir(eid)/'source.%(ext)s'),merge_output_format='mkv',
+        opts.update(format=formatter(code,plan),outtmpl=str(task_dir(eid)/'source.%(ext)s'),merge_output_format='mkv',
             postprocessor_hooks=[lambda event:print('BOTDOWNLOAD_PROCESSING',flush=True) if event.get('status')=='started' else None])
     else:
         opts.update(skip_download=True)
@@ -57,7 +61,8 @@ def main():
             print(json.dumps(info,ensure_ascii=False,default=str))
     except Exception as exc:
         text=str(exc).lower()
-        if 'no space left' in text:reason='disk_full'
+        if 'quality_unavailable' in text or (plan is not None and any(s in text for s in ('requested format','http error 404','http error 410'))):reason='quality_unavailable'
+        elif 'no space left' in text:reason='disk_full'
         elif any(x in text for x in ('not available','private video','sign in','login required','unsupported url','video unavailable','copyright','requested format')):reason='source_unavailable'
         else:reason='tool_error'
         print(reason,file=sys.stderr)

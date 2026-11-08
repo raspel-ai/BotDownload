@@ -3,8 +3,6 @@ import json
 import hashlib
 import math
 import os
-from pathlib import Path
-import shutil
 import sys
 import asyncio
 import time
@@ -13,28 +11,37 @@ from .isolation import require_isolation
 from .processes import run, ToolError
 
 
-from .formats import positive as number, short_side as dimensions, audio as audio_format, estimate
-
-def plans(info):
-    result=[]
-    for code in ('480p','720p','1080p','MP3'):
-        e=estimate(info,code)
-        if e is not None:
-            result.append({'code':code,'approximate':True,**e})
-    return result
+from .formats import positive as number, short_side as dimensions, audio as audio_format, candidates, validate_plan
 
 def safe_text(v, limit):
     return ''.join(c for c in v if c >= ' ' and c != '\x7f')[:limit] if type(v) is str else ''
 
+def display_dimensions(stream):
+    """Display orientation can live in MP4's matrix instead of encoded dimensions."""
+    rotation = next((s['rotation'] for s in stream.get('side_data_list', []) if 'rotation' in s),
+                    stream.get('tags', {}).get('rotate', 0))
+    try:
+        angle = float(rotation) % 360
+    except (TypeError, ValueError):
+        angle = 0
+    w, h = stream.get('width'), stream.get('height')
+    return (h, w) if angle in {90, 270} else (w, h)
+
 def metadata(info):
     if type(info) is not dict or info.get('_type') in {'playlist', 'multi_video'}:
         raise ToolError('unsupported_content', True)
-    a = audio_format([f for f in info.get('formats', []) if type(f) is dict])
+    formats = info.get('formats') if type(info.get('formats')) is list else []
+    info = info | {'formats':formats}
+    variants = candidates(info)
+    a = audio_format([f for f in formats if type(f) is dict])
+    videos = [f for f in formats if type(f) is dict and f.get('vcodec') not in (None,'none')]
+    unknown_quality = bool(videos) and not any(dimensions(f) for f in videos)
+    known_formats = bool(variants) or any(dimensions(f) for f in videos)
     return {'title': safe_text(info.get('title'), 200), 'uploader': safe_text(info.get('uploader') or info.get('channel'), 100),
         'duration': info.get('duration') if number(info.get('duration')) else None,
         'upload_date': safe_text(info.get('upload_date'), 8), 'view_count': info.get('view_count') if type(info.get('view_count')) is int and info['view_count'] >= 0 else None,
         'thumbnail': safe_text(info.get('thumbnail'), 2048), 'language': safe_text((a or {}).get('language') or info.get('language'), 40),
-        'variants': plans(info)}
+        'analysis': 'known' if known_formats and not unknown_quality else 'unknown', 'variants': variants}
 
 class MediaTools:
     def __init__(self, config):
@@ -60,6 +67,9 @@ class MediaTools:
     async def download(self, task_id, payload, stage):
         require_isolation(self.config)
         code = payload['format']
+        plan = payload.get('selection')
+        if code not in {'video', 'audio'}:
+            validate_plan(plan, code)
         audio = code in {'audio', 'MP3'}
         target = ready_path(task_id, audio, self.config['storage']['files_dir'])
         if target.exists() or target.is_symlink():
@@ -72,7 +82,7 @@ class MediaTools:
                 processing_started=time.monotonic()
                 stage('processing')
         try:
-            await run([sys.executable, '-m', 'bot.tool', 'download', str(task_id), code, payload['url']],
+            await run([sys.executable, '-m', 'bot.tool', 'download', str(task_id), code] + ([json.dumps(plan, separators=(',', ':'))] if plan else []) + [payload['url']],
                 timeout=self.config['timeouts']['download_timeout_seconds'],output_limit=1024*1024,progress=progress,processing_timeout=self.config['timeouts']['ffmpeg_timeout_seconds'])
             sources = [p for p in root.iterdir() if p.is_file() and not p.is_symlink() and not p.name.endswith(('.part', '.ytdl', '.json'))]
             if len(sources) != 1:
@@ -88,6 +98,9 @@ class MediaTools:
                 output = root / ('ready.mp3' if audio else 'ready.mp4')
                 videos = [s for s in streams if s.get('codec_type') == 'video' and not s.get('disposition', {}).get('attached_pic')]
                 audios = [s for s in streams if s.get('codec_type') == 'audio']
+                if len(videos) > 1:
+                    raise ToolError('quality_unavailable', True)
+                audio_count = len(audios)
                 if audios:
                     selected=next((s for s in audios if str(s.get('tags',{}).get('language','')).lower() in {'ru','rus'}),None)
                     selected=selected or next((s for s in audios if s.get('disposition',{}).get('default')),audios[0])
@@ -95,6 +108,8 @@ class MediaTools:
                 if not audios or (not audio and not videos):
                     raise ToolError('missing_stream', True)
                 if not audio and code.endswith('p') and dimensions(videos[0]) != int(code[:-1]):
+                    raise ToolError('quality_unavailable', True)
+                if plan and not audio and (plan['video']['width'],plan['video']['height']) not in {(videos[0].get('width'),videos[0].get('height')),display_dimensions(videos[0])}:
                     raise ToolError('quality_unavailable', True)
                 stage('conversion' if audio else 'processing')
                 ff = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-n', '-protocol_whitelist', 'file,pipe', '-i', str(source), '-map_metadata', '-1']
@@ -107,9 +122,23 @@ class MediaTools:
                         ff += ['-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-b:v', '4000k']
                     ff += ['-c:a', 'copy' if audios[0].get('codec_name') == 'aac' and audios[0].get('profile') == 'LC' else 'aac', '-b:a', '192k', '-movflags', '+faststart']
                 ff += [str(output)]
-                await run(ff, timeout=self.config['timeouts']['ffmpeg_timeout_seconds'])
+                # A single already-compatible MP4 can be copied byte-for-byte.
+                direct = (not audio and compatible and audios[0].get('codec_name') == 'aac'
+                          and audios[0].get('profile') == 'LC' and source.suffix == '.mp4' and audio_count == 1)
+                if direct:
+                    with source.open('rb') as src, output.open('xb') as dst:
+                        while chunk := src.read(1024*1024):
+                            dst.write(chunk)
+                            await asyncio.sleep(0)  # cancellation closes files before cleanup
+                else:
+                    await run(ff, timeout=self.config['timeouts']['ffmpeg_timeout_seconds'])
                 checked(output, root, limit)
                 final_streams, final_duration = await self.probe(output)
+                final_videos = [s for s in final_streams if s.get('codec_type') == 'video' and not s.get('disposition', {}).get('attached_pic')]
+                if not audio and (len(final_videos) != 1 or dimensions(final_videos[0]) != dimensions(videos[0])):
+                    raise ToolError('quality_unavailable', True)
+                if not audio and display_dimensions(final_videos[0]) != display_dimensions(videos[0]):
+                    raise ToolError('quality_unavailable', True)
                 if final_duration > max_duration:
                     raise ToolError('duration_exceeded', True)
                 if audio and not any(s.get('codec_name') == 'mp3' for s in final_streams):
@@ -122,7 +151,7 @@ class MediaTools:
                 os.chmod(target, 0o600)
                 with target.open('rb') as stream:
                     digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-                result = {'filename': target.name, 'size': target.stat().st_size, 'duration': final_duration, 'format': 'mp3' if audio else 'mp4', 'validated': True, 'sha256': digest}
+                result = {'filename': target.name, 'size': target.stat().st_size, 'duration': final_duration, 'format': 'mp3' if audio else 'mp4', 'validated': True, 'sha256': digest, 'resolution': None if audio else dimensions(final_videos[0]), 'selection': plan}
                 manifest = target.with_suffix('.json')
                 with manifest.open('x') as stream:
                     json.dump(result, stream)

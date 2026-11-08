@@ -2,8 +2,8 @@
 import json
 import re
 from .urls import validate_url
+from .formats import valid_code, validate_plan
 MAX_MESSAGE = 64 * 1024
-CODES = {'480p', '720p', '1080p', 'MP3', 'video', 'audio'}
 STATES = {'accepted', 'running', 'completed', 'failed', 'cancelled', 'not_found'}
 class ProtocolError(ValueError):
     pass
@@ -48,7 +48,7 @@ def request(raw):
     a, p = v['action'], v['payload']
     if type(a) is not str or a not in {'inspect', 'download', 'cancel', 'status'} or type(p) is not dict:
         raise ProtocolError('invalid_action')
-    fields = {'url', 'platform', 'resource_id'} if a == 'inspect' else {'url', 'platform', 'resource_id', 'format'}
+    fields = {'url', 'platform', 'resource_id'} if a == 'inspect' else {'url', 'platform', 'resource_id', 'format', 'selection'}
     if a in {'cancel', 'status'}:
         fields = set()
     if set(p) != fields:
@@ -57,8 +57,17 @@ def request(raw):
         u = validate_url(p['url'])
         if (u.url, u.platform, u.resource_id) != (p['url'], p['platform'], p['resource_id']):
             raise ProtocolError('invalid_resource')
-        if a == 'download' and (type(p['format']) is not str or p['format'] not in CODES):
+        if a == 'download' and not valid_code(p['format']):
             raise ProtocolError('invalid_format')
+        if a == 'download':
+            if p['format'] in {'video','audio'}:
+                if p['selection'] is not None:
+                    raise ProtocolError('invalid_selection')
+            else:
+                try:
+                    validate_plan(p['selection'],p['format'])
+                except ValueError:
+                    raise ProtocolError('invalid_selection') from None
     return v
 
 def response(raw, sent):

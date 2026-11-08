@@ -40,14 +40,14 @@ def test_rate_persists(store,config):
     assert not Store().rate_allow(1,c,now=1100)
     assert Store().rate_allow(1,c,now=5000)
 
-def test_quota_atomic_once_and_cache(store):
+def test_quota_atomic_once_and_cache(store,config):
     i=job(store);store.select(i,123,10,2,'video',20)
-    store.update(i,phase='uploading')
+    store.update(i,phase='uploading',metadata=json.dumps({'result':{'validated':True,'size':1,'selection':None,'resolution':480,'format':'mp4','duration':1,'sha256':'a'*64}}))
     assert store.delivered(i,'FILE')
     assert not store.delivered(i,'FILE')
     assert store.used(123)==1
     j=store.create(123,10,4,5,validate_url('https://youtu.be/abcdefghijk'));store.update(j,phase='card')
-    assert store.select(j,123,10,5,'video',1)
+    assert store.select(j,123,10,5,'video',1,config['telegram']['max_upload_size_mb'][config['telegram']['api_mode']]*1024**2)
     assert store.get(j)['phase']=='upload_pending'
     assert store.get(j)['quota_exempt']
     assert store.delivered(j,'FILE')

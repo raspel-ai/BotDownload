@@ -49,7 +49,7 @@ def test_not_found_checks_ready_before_redownload(store,config):
     from bot.files import ready_path
     i=job(store);store.select(i,123,10,2,'video',20);eid=store.execution(i,'download')
     p=ready_path(eid,False);p.write_bytes(b'confirmed')
-    m={'filename':p.name,'size':p.stat().st_size,'duration':1,'format':'mp4','validated':True,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+    m={'filename':p.name,'size':p.stat().st_size,'duration':1,'format':'mp4','validated':True,'resolution':480,'selection':None,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
     p.with_suffix('.json').write_text(json.dumps(m))
     store.update(i,phase='running',download_attempts=1)
     b=Broker(store,Client(),config,TG())

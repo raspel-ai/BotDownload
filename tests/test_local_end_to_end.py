@@ -57,14 +57,14 @@ def test_link_card_choice_media_delivery_and_cache(store,config,tmp_path,monkeyp
             assert store.get(i)['url']==canonical
             await until(i,'card')
             j=store.get(i)
-            assert store.select(i,123,10,j['message_id'],'480p',20)
+            assert store.select(i,123,10,j['message_id'],'480p',20,config['telegram']['max_upload_size_mb'][config['telegram']['api_mode']]*1024**2)
             await until(i,'completed')
             assert len(downloads)==1 and store.used(123)==1 and tg.sent==[False]
             assert not list(Path('files').glob('*.mp4'))
             result,k,_=b.accept(123,10,2,f'https://www.youtube.com/watch?start_radio=1&list=RD{rid}&v={rid}')
             assert store.get(k)['url']==canonical
             await until(k,'card');j=store.get(k)
-            assert store.select(k,123,10,j['message_id'],'480p',20)
+            assert store.select(k,123,10,j['message_id'],'480p',20,config['telegram']['max_upload_size_mb'][config['telegram']['api_mode']]*1024**2)
             assert store.get(k)['phase']=='upload_pending'
             await until(k,'completed')
             assert len(downloads)==1 and tg.sent==[False,True] and store.used(123)==1
