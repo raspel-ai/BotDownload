@@ -1,1 +1,1 @@
-"""BotDownload package."""
+"""BotDownload v1."""

@@ -1,4 +1,7 @@
 aiogram==3.22.0
 PyYAML==6.0.2
 python-dotenv==1.1.1
-yt-dlp==2025.9.26
+yt-dlp==2026.10.26
+
+yt-dlp-ejs==0.8.0
+deno==2.9.8
