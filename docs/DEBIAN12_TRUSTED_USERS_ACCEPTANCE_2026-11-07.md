@@ -37,3 +37,30 @@ Owner-reported manual verification on the Debian 12 VPS after deploying commit `
 ## Outcome
 
 The owner confirmed that the bot works for the tested video, audio, cached-video and trusted-user scenarios after the update. This is a successful **functional smoke acceptance**, not full regression or security re-attestation.
+
+## Follow-up acceptance — 2026-11-08 (owner-reported)
+
+The owner performed additional Telegram and VPS checks after approximately 20 hours of operation:
+
+| Scenario | Observation |
+| --- | --- |
+| Ordinary-user link limit | Tested from a different Telegram account; the link-attempt limit still works; PASS |
+| Unavailable/deleted or child-directed YouTube videos | Bot did not download these tested videos and replied: «Ошибка: Скачать выбранный вариант не удалось. Вы можете отправить ссылку заново и выбрать другой вариант.»; graceful error reporting observed |
+| Cancel active download | After link analysis and selection, the bot displayed «Скачивание, попытка 1…». Owner waited about a minute and sent `/cancel_all`; reply was «Отменено: 6. Ожидают подтверждения остановки: 0.»; canceled video did not arrive later; PASS for observed cancellation |
+| Cached video across a restart | Owner confirmed the bot still offers a previously downloaded video from cache after restart; PASS |
+| Continued operation | Owner sent more links the following day; bot downloaded and delivered videos successfully; PASS |
+
+### Service state observed 2026-11-08
+
+The owner ran `systemctl is-active` and `systemctl show` for both services. Results:
+
+| Unit | ActiveState | SubState | ActiveEnterTimestamp | NRestarts |
+| --- | --- | --- | --- | --- |
+| `tgbot.service` | active | running | Sat 2026-11-07 17:10:29 MSK | 0 |
+| `tgbot-worker.service` | active | running | Sat 2026-11-07 17:10:29 MSK | 0 |
+
+Both units were active with no systemd-recorded automatic restarts. This is evidence of stable service state over the observation window, not a complete audit of uninterrupted operation; journals were not reviewed.
+
+### Updated scope and remaining work
+
+The earlier outstanding ordinary-user limit, active cancellation, cache-after-restart and approximately 20-hour service checks have now been covered by owner-reported manual testing. Full Python 3.11 regression, crash recovery, exceptional recovery paths, and renewed security/isolation attestation remain unverified in this session. No code or VPS configuration changes were made while recording this follow-up; autostart remains intentionally disabled.
