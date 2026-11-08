@@ -183,7 +183,12 @@ def candidates(info):
 
 
 def too_large(v, limit):
-    return v.get('size_kind') == 'known' and type(v.get('size')) is int and v['size'] > limit
+    size = v.get('size')
+    if type(size) is not int:
+        return False
+    if v.get('size_kind') == 'known':
+        return size > limit
+    return v.get('size_kind') == 'approximate' and size * 10 > limit * 11
 
 
 def allocate(variants, limit):

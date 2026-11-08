@@ -400,6 +400,18 @@ def test_direct_copy_requires_codec_and_pixel_format_evidence():
         assert estimate({'duration':60},altered,altered)['size_kind']!='known'
 
 
+def test_size_filter_known_approximate_and_unknown_boundaries():
+    from bot.formats import too_large
+    limit=50*1024**2
+    for kind,size,expected in [
+        ('known',limit,False),('known',limit+1,True),
+        ('approximate',limit+1,False),('approximate',55*1024**2,False),
+        ('approximate',55*1024**2+1,True),('unknown',2353*1024**2,False),
+        ('unknown',None,False),
+    ]:
+        assert too_large({'size_kind':kind,'size':size},limit)==expected
+
+
 @pytest.mark.parametrize('has_alternatives',[True,False])
 def test_mp3_oversize_reuses_card_size_evidence(store,config,has_alternatives):
     from bot.files import ready_path
@@ -410,16 +422,11 @@ def test_mp3_oversize_reuses_card_size_evidence(store,config,has_alternatives):
     for v,mib in zip(data['variants'],[423,678,2353]):
         v.update(size=mib*1024**2,size_kind='approximate')
     if has_alternatives:
+        data['variants'][1].update(size=55*1024**2)
         data['variants'][2].update(size=None,size_kind='unknown')
     jid,b,tg=card(store,config,data)
-    assert [c for _,c in tg.statuses[-1][1]]==['480p','720p','1080p','MP3']
+    assert [c for _,c in tg.statuses[-1][1]]==(['720p','1080p','MP3'] if has_alternatives else ['MP3'])
     assert store.select(jid,123,10,2,'MP3',20)
-    # Stronger evidence can become available after the first card was shown.
-    for v in data['variants'][:1 if has_alternatives else 3]:
-        result=actual(v['plan'],size=limit+1)|{'resolution':int(v['code'][:-1])}
-        key=cache_key('youtube','abcdefghijk',v['code'],v['plan'])
-        with store.db() as db:
-            db.execute('INSERT INTO result_cache VALUES(?,?,1,?)',(key,'CACHED',json.dumps({'result':result})))
     eid=store.execution(jid,'download')
     p=ready_path(eid,True)
     with p.open('wb') as stream:
@@ -432,7 +439,7 @@ def test_mp3_oversize_reuses_card_size_evidence(store,config,has_alternatives):
     assert 'MP3' not in [v['code'] for v in json.loads(store.get(jid)['metadata'])['variants']]
     if has_alternatives:
         assert [c for _,c in buttons]==['720p','1080p']
-        assert '≈ 678.0 МиБ' in buttons[0][0] and 'размер неизвестен' in buttons[1][0]
+        assert '≈ 55.0 МиБ' in buttons[0][0] and 'размер неизвестен' in buttons[1][0]
     else:
         assert not buttons and 'Других доступных форматов нет' in text
         assert 'Выберите' not in text and store.get(jid)['error']=='file_too_large'
