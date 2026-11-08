@@ -20,13 +20,14 @@ def test_valid(url,platform,rid,monkeypatch):
     monkeypatch.setattr(socket,'getaddrinfo',lambda *a,**k:pytest.fail('DNS forbidden'))
     u=validate_url(url)
     assert (u.platform,u.resource_id)==(platform,rid)
+    assert u.url==(f'https://www.youtube.com/watch?v={rid}' if platform=='youtube' else url)
 
 @pytest.mark.parametrize('url',[
  '',None,'https://youtube.com/watch?v=abcdefghijk&v=abcdefghijk',
- 'https://youtube.com/watch?v=abcdefghijk&t=2','https://youtube.com/watch?v=abcdefghijk&list=x',
- 'https://youtu.be/abcdefghijk?si=x','https://youtu.be/abcdefghijk?',
+ 'https://youtube.com/watch?v=abcdefghijk&t=2','https://youtube.com/watch?v=abcdefghijk&list=',
+ 'https://youtu.be/abcdefghijk?si=','https://youtu.be/abcdefghijk?',
  'https://youtube.com/watch?v=abc','https://youtube.com/playlist?list=x',
- 'https://youtube.com/shorts/abcdefghijk','https://user@youtube.com/watch?v=abcdefghijk',
+ 'https://youtube.com/shorts/abcdefghijk/extra','https://user@youtube.com/watch?v=abcdefghijk',
  'https://youtube.com:443/watch?v=abcdefghijk','http://youtu.be/abcdefghijk',
  'https://127.0.0.1/abcdefghijk','https://[::1]/abcdefghijk',
  'https://youtube.com.evil/watch?v=abcdefghijk','https://evil.youtube.com/watch?v=abcdefghijk',
@@ -43,7 +44,7 @@ def test_invalid(url):
     with pytest.raises(InvalidURL):validate_url(url)
 
 def envelope(action='inspect'):
-    return {'version':1,'request_id':'abc','task_id':1,'action':action,'payload':{'url':'https://youtu.be/abcdefghijk','platform':'youtube','resource_id':'abcdefghijk'}}
+    return {'version':1,'request_id':'abc','task_id':1,'action':action,'payload':{'url':'https://www.youtube.com/watch?v=abcdefghijk','platform':'youtube','resource_id':'abcdefghijk'}}
 
 def test_protocol_exact():
     v=envelope();assert request(encode(v))==v

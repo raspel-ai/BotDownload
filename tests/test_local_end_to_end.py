@@ -5,21 +5,28 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import pytest
+from test_youtube_urls import REAL_CASES
 from bot.broker import Broker
 from bot.client import WorkerClient
 from bot.media import MediaTools
 from bot.worker import Controller,connection
 
 
-def test_link_card_choice_media_delivery_and_cache(store,config,tmp_path,monkeypatch):
+@pytest.mark.parametrize('raw,rid',REAL_CASES)
+def test_link_card_choice_media_delivery_and_cache(store,config,tmp_path,monkeypatch,raw,rid):
     import bot.media as media
     fixture=tmp_path/'fixture.mp4'
     subprocess.run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i','color=c=blue:s=720x480:r=10:d=1','-f','lavfi','-i','sine=frequency=500:duration=1','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(fixture)],check=True)
     original=media.run
     downloads=[]
+    canonical=f'https://www.youtube.com/watch?v={rid}'
+    inspected=[]
     async def tools(args,**kw):
         if 'bot.tool' in args:
+            assert args[-1]==canonical
             if args[3]=='inspect':
+                inspected.append(args[-1])
                 return json.dumps({'title':'Видео','duration':1,'formats':[{'format_id':'v','width':720,'height':480,'vcodec':'avc1','acodec':'mp4a.40.2','language':'ru','filesize':fixture.stat().st_size}]}).encode()
             from bot.files import task_dir
             downloads.append(args[4]);shutil.copyfile(fixture,task_dir(int(args[4]))/'source.mp4');return b''
@@ -46,19 +53,22 @@ def test_link_card_choice_media_delivery_and_cache(store,config,tmp_path,monkeyp
                 while store.get(jid)['phase']!=phase:
                     await b.tick();await asyncio.sleep(.02)
         try:
-            result,i,_=b.accept(123,10,1,'https://youtu.be/abcdefghijk');assert result=='accepted'
+            result,i,_=b.accept(123,10,1,raw);assert result=='accepted'
+            assert store.get(i)['url']==canonical
             await until(i,'card')
             j=store.get(i)
             assert store.select(i,123,10,j['message_id'],'480p',20)
             await until(i,'completed')
             assert len(downloads)==1 and store.used(123)==1 and tg.sent==[False]
             assert not list(Path('files').glob('*.mp4'))
-            result,k,_=b.accept(123,10,2,'https://youtu.be/abcdefghijk')
+            result,k,_=b.accept(123,10,2,f'https://www.youtube.com/watch?start_radio=1&list=RD{rid}&v={rid}')
+            assert store.get(k)['url']==canonical
             await until(k,'card');j=store.get(k)
             assert store.select(k,123,10,j['message_id'],'480p',20)
             assert store.get(k)['phase']=='upload_pending'
             await until(k,'completed')
             assert len(downloads)==1 and tg.sent==[False,True] and store.used(123)==1
+            assert inspected==[canonical,canonical]
         finally:
             server.close();await server.wait_closed();await c.close()
     asyncio.run(scenario())

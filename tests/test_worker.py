@@ -14,7 +14,7 @@ class Tools:
         finally:self.active-=1;self.stopped=True
 
 def req(i,action='download'):
-    p={'url':'https://youtu.be/abcdefghijk','platform':'youtube','resource_id':'abcdefghijk'}
+    p={'url':'https://www.youtube.com/watch?v=abcdefghijk','platform':'youtube','resource_id':'abcdefghijk'}
     if action=='download':p['format']='video'
     if action in {'cancel','status'}:p={}
     return {'version':1,'request_id':'abc','task_id':i,'action':action,'payload':p}
